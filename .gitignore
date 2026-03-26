@@ -1,0 +1,22 @@
+# Secrets
+.env
+*.pem
+*.key
+
+# Database
+data/bulkmind.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

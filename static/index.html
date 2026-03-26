@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BulkMind Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+
+  .header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header h1 span { color: var(--accent); }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;
+  }
+  .status-online { background: rgba(63,185,80,0.15); color: var(--green); }
+  .status-offline { background: rgba(248,81,73,0.15); color: var(--red); }
+  .mode-badge { background: rgba(188,140,255,0.15); color: var(--purple); padding: 4px 10px; border-radius: 12px; font-size: 12px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; padding: 24px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 20px; transition: border-color 0.2s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card h2 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+  .card .value { font-size: 28px; font-weight: 700; }
+  .card .sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  .wide { grid-column: 1 / -1; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 10px 12px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  tr:hover td { background: rgba(88,166,255,0.04); }
+
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .tag-buy { background: rgba(63,185,80,0.15); color: var(--green); }
+  .tag-sell { background: rgba(248,81,73,0.15); color: var(--red); }
+  .tag-win { background: rgba(63,185,80,0.15); color: var(--green); }
+  .tag-loss { background: rgba(248,81,73,0.15); color: var(--red); }
+  .tag-open { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .tag-critical { background: rgba(248,81,73,0.15); color: var(--red); }
+  .tag-high { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .tag-medium { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .tag-low { background: rgba(139,148,158,0.15); color: var(--muted); }
+
+  .feed { max-height: 300px; overflow-y: auto; }
+  .feed-item {
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    font-size: 13px; white-space: pre-wrap; word-break: break-word;
+  }
+  .feed-item.alert { border-left: 3px solid var(--red); background: rgba(248,81,73,0.04); }
+  .feed-item .ts { color: var(--muted); font-size: 11px; }
+
+  .ws-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .ws-connected { background: var(--green); }
+  .ws-disconnected { background: var(--red); }
+
+  @media (max-width: 768px) { .grid { padding: 12px; gap: 12px; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>Bulk</span>Mind</h1>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <span class="mode-badge" id="mode">--</span>
+    <span class="status-badge status-offline" id="status">
+      <span class="ws-dot ws-disconnected" id="ws-dot"></span>
+      <span id="status-text">Connecting...</span>
+    </span>
+  </div>
+</div>
+
+<div class="grid">
+  <!-- Stats Cards -->
+  <div class="card">
+    <h2>Total Trades</h2>
+    <div class="value" id="total-trades">--</div>
+    <div class="sub" id="open-trades">-- open</div>
+  </div>
+  <div class="card">
+    <h2>Win Rate</h2>
+    <div class="value" id="win-rate">--</div>
+    <div class="sub" id="win-loss">-- W / -- L</div>
+  </div>
+  <div class="card">
+    <h2>Total PnL</h2>
+    <div class="value" id="total-pnl">--</div>
+    <div class="sub" id="avg-pnl">Avg: --</div>
+  </div>
+  <div class="card">
+    <h2>Avg Latency</h2>
+    <div class="value" id="avg-latency">--</div>
+    <div class="sub" id="issue-count">-- open issues</div>
+  </div>
+
+  <!-- Open Trades -->
+  <div class="card wide">
+    <h2>Open Trades</h2>
+    <table>
+      <thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>SL</th><th>TP</th><th>Size</th><th>Time</th></tr></thead>
+      <tbody id="open-trades-table"><tr><td colspan="7" style="color:var(--muted)">No open trades</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Recent Trades -->
+  <div class="card wide">
+    <h2>Recent Trades</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Status</th></tr></thead>
+      <tbody id="trades-table"><tr><td colspan="7" style="color:var(--muted)">Loading...</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Live Feed -->
+  <div class="card" style="grid-column: 1 / -1; max-width: 100%;">
+    <h2>Live Feed</h2>
+    <div class="feed" id="feed">
+      <div class="feed-item" style="color:var(--muted)">Waiting for messages...</div>
+    </div>
+  </div>
+
+  <!-- Issues -->
+  <div class="card wide">
+    <h2>Recent Issues (24h)</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Severity</th><th>Category</th><th>Title</th></tr></thead>
+      <tbody id="issues-table"><tr><td colspan="4" style="color:var(--muted)">Loading...</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Latency -->
+  <div class="card wide">
+    <h2>Latency by Endpoint (last 60 min)</h2>
+    <table>
+      <thead><tr><th>Endpoint</th><th>Avg</th><th>Min</th><th>Max</th><th>Samples</th></tr></thead>
+      <tbody id="latency-table"><tr><td colspan="5" style="color:var(--muted)">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+const WS_URL = `ws://${window.location.host}/ws`;
+
+// ── Helpers ─────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+function tag(text, cls) { return `<span class="tag tag-${cls}">${text}</span>`; }
+function fmtTime(iso) {
+  if (!iso) return '--';
+  const d = new Date(iso + 'Z');
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function fmtPnl(val) {
+  if (val == null) return '--';
+  const cls = val >= 0 ? 'color:var(--green)' : 'color:var(--red)';
+  return `<span style="${cls}">$${val.toFixed(2)}</span>`;
+}
+
+// ── Fetch data ──────────────────────────────────────────────
+async function fetchJSON(path) {
+  try {
+    const r = await fetch(API + path);
+    return await r.json();
+  } catch { return null; }
+}
+
+async function refresh() {
+  // Status
+  const st = await fetchJSON('/api/status');
+  if (st) {
+    $('mode').textContent = st.mode;
+    $('total-trades').textContent = st.total_trades;
+    $('open-trades').textContent = `${st.open_trades} open`;
+    $('avg-latency').textContent = st.avg_latency_ms ? `${st.avg_latency_ms}ms` : 'N/A';
+    $('issue-count').textContent = `${st.unresolved_issues} open issues`;
+  }
+
+  // Stats
+  const stats = await fetchJSON('/api/stats?agent=BreakoutBot');
+  if (stats && stats.total) {
+    const wr = stats.total > 0 ? ((stats.wins || 0) / stats.total * 100).toFixed(1) : '0.0';
+    $('win-rate').textContent = `${wr}%`;
+    $('win-loss').textContent = `${stats.wins || 0} W / ${stats.losses || 0} L`;
+    $('total-pnl').textContent = `$${(stats.total_pnl || 0).toFixed(2)}`;
+    $('avg-pnl').textContent = `Avg: ${(stats.avg_pnl_pct || 0).toFixed(2)}%`;
+    const pnlEl = $('total-pnl');
+    pnlEl.style.color = (stats.total_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+
+  // Open trades
+  const open = await fetchJSON('/api/trades/open');
+  const otb = $('open-trades-table');
+  if (open && open.length) {
+    otb.innerHTML = open.map(t => `<tr>
+      <td>${t.symbol}</td>
+      <td>${tag(t.side, t.side.toLowerCase())}</td>
+      <td>${t.entry_price}</td><td>${t.sl_price}</td><td>${t.tp_price}</td>
+      <td>${t.size}</td><td>${fmtTime(t.ts)}</td>
+    </tr>`).join('');
+  } else {
+    otb.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">No open trades</td></tr>';
+  }
+
+  // Recent trades
+  const trades = await fetchJSON('/api/trades?limit=20');
+  const ttb = $('trades-table');
+  if (trades && trades.length) {
+    ttb.innerHTML = trades.map(t => `<tr>
+      <td>${fmtTime(t.ts)}</td><td>${t.symbol}</td>
+      <td>${tag(t.side, t.side.toLowerCase())}</td>
+      <td>${t.entry_price}</td><td>${t.exit_price || '--'}</td>
+      <td>${fmtPnl(t.pnl_usd)}</td>
+      <td>${tag(t.status, t.status.toLowerCase())}</td>
+    </tr>`).join('');
+  } else {
+    ttb.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">No trades yet</td></tr>';
+  }
+
+  // Issues
+  const issues = await fetchJSON('/api/issues?hours=24');
+  const itb = $('issues-table');
+  if (issues && issues.length) {
+    itb.innerHTML = issues.map(i => `<tr>
+      <td>${fmtTime(i.ts)}</td>
+      <td>${tag(i.severity, i.severity.toLowerCase())}</td>
+      <td>${i.category}</td><td>${i.title}</td>
+    </tr>`).join('');
+  } else {
+    itb.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">No issues</td></tr>';
+  }
+
+  // Latency
+  const lat = await fetchJSON('/api/latency?minutes=60');
+  const ltb = $('latency-table');
+  if (lat && lat.length) {
+    ltb.innerHTML = lat.map(l => `<tr>
+      <td>${l.endpoint}</td><td>${l.avg_ms}ms</td>
+      <td>${l.min_ms}ms</td><td>${l.max_ms}ms</td><td>${l.samples}</td>
+    </tr>`).join('');
+  } else {
+    ltb.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No data</td></tr>';
+  }
+}
+
+// ── WebSocket ───────────────────────────────────────────────
+let ws;
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    $('ws-dot').className = 'ws-dot ws-connected';
+    $('status-text').textContent = 'Connected';
+    $('status').className = 'status-badge status-online';
+  };
+  ws.onclose = () => {
+    $('ws-dot').className = 'ws-dot ws-disconnected';
+    $('status-text').textContent = 'Disconnected';
+    $('status').className = 'status-badge status-offline';
+    setTimeout(connectWS, 3000);
+  };
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    const feed = $('feed');
+    const item = document.createElement('div');
+    item.className = `feed-item${data.type === 'alert' ? ' alert' : ''}`;
+    item.innerHTML = `<span class="ts">${fmtTime(data.ts)}</span>  ${data.content.replace(/\n/g, '<br>')}`;
+    feed.prepend(item);
+    // Keep feed manageable
+    while (feed.children.length > 100) feed.removeChild(feed.lastChild);
+    // Refresh data on new messages
+    refresh();
+  };
+}
+
+// ── Init ────────────────────────────────────────────────────
+refresh();
+connectWS();
+setInterval(refresh, 30000); // refresh every 30s
+</script>
+</body>
+</html>
