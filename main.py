@@ -1,6 +1,6 @@
 """
 BulkMind — Main Orchestrator
-Runs BulkWatch + BulkStream + BulkProfile + BreakoutBot + Dashboard in parallel
+Runs BulkWatch + BulkStream + BulkProfile + BulkSOL + BreakoutBot + Dashboard
 """
 
 import asyncio
@@ -11,6 +11,7 @@ from executor import BulkClient, BulkExecutor
 from bulk_watch import BulkWatch
 from bulk_stream import BulkStream
 from bulk_profile import BulkProfile
+from bulk_sol import BulkSOL
 from breakout_bot import BreakoutBot
 from dashboard import Dashboard
 from evoskill_integration import run_evoskill_loop
@@ -29,22 +30,25 @@ async def main():
 
     # Shared components
     reporter  = Reporter()
-    dashboard = Dashboard(reporter)
+
+    # Init modules
+    watch    = BulkWatch(reporter)
+    stream   = BulkStream(reporter)
+    profile  = BulkProfile(reporter)
+    bulksol  = BulkSOL(reporter)
+    dashboard = Dashboard(reporter, bulksol)
 
     async with aiohttp.ClientSession() as session:
         client   = BulkClient(session)
         executor = BulkExecutor(client, paper=BREAKOUT_PAPER_MODE)
-
-        watch   = BulkWatch(reporter)
-        stream  = BulkStream(reporter)
-        profile = BulkProfile(reporter)
-        bot     = BreakoutBot(executor, client, reporter)
+        bot      = BreakoutBot(executor, client, reporter)
 
         await reporter.send(
             "🟢 *BulkMind Online*\n"
             f"BulkWatch: ✅\n"
             f"BulkStream: ✅\n"
             f"BulkProfile: ✅\n"
+            f"BulkSOL: ✅\n"
             f"BreakoutBot: ✅\n"
             f"Dashboard: ✅\n"
             f"Mode: `{'PAPER' if BREAKOUT_PAPER_MODE else 'LIVE'}`"
@@ -56,6 +60,7 @@ async def main():
             watch.run(),          # BulkWatch: exchange health
             stream.run(),         # BulkStream: live trade feed
             profile.run(),        # BulkProfile: wallet discovery
+            bulksol.run(),        # BulkSOL: staking analytics
             bot.run(),            # BreakoutBot: trading agent
             evoskill_schedule(),  # Periodic EvoSkill improvement
         )

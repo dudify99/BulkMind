@@ -23,8 +23,9 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 
 class Dashboard:
-    def __init__(self, reporter: Reporter):
+    def __init__(self, reporter: Reporter, bulksol=None):
         self.reporter = reporter
+        self.bulksol = bulksol
         self.app = web.Application()
         self._setup_routes()
 
@@ -51,6 +52,11 @@ class Dashboard:
         self.app.router.add_get("/api/account/{pubkey}", self._api_account)
         self.app.router.add_get("/api/account/{pubkey}/fills", self._api_account_fills)
         self.app.router.add_get("/api/account/{pubkey}/positions", self._api_account_positions)
+        # BulkSOL staking analytics
+        self.app.router.add_get("/api/bulksol", self._api_bulksol)
+        self.app.router.add_get("/api/bulksol/history", self._api_bulksol_history)
+        self.app.router.add_get("/api/bulksol/deployments", self._api_bulksol_deployments)
+        self.app.router.add_get("/api/bulksol/validators", self._api_bulksol_validators)
         self.app.router.add_get("/ws", self._ws_handler)
         if STATIC_DIR.exists():
             self.app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
@@ -280,6 +286,82 @@ class Dashboard:
                                         timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     data = await resp.json(content_type=None)
                     return web.json_response(data)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=502)
+
+    # ── BulkSOL Staking Analytics ───────────────────────────
+
+    async def _api_bulksol(self, request):
+        """Full BulkSOL staking stats: supply, APY, price, validator earnings, DeFi deployments."""
+        if not self.bulksol:
+            return web.json_response({"error": "BulkSOL module not initialized"}, status=503)
+        try:
+            async with aiohttp.ClientSession() as session:
+                data = await self.bulksol.get_full_stats(session)
+            return web.json_response(data)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=502)
+
+    async def _api_bulksol_history(self, request):
+        """BulkSOL historical snapshots for chart data."""
+        if not self.bulksol:
+            return web.json_response({"error": "BulkSOL module not initialized"}, status=503)
+        hours = int(request.query.get("hours", "168"))
+        data = self.bulksol.get_snapshots(hours)
+        return web.json_response({
+            "snapshots": data,
+            "metrics": ["supply", "sol_value", "apy_pct", "price_usd",
+                         "market_cap_usd", "total_sol_staked",
+                         "validator_earnings_24h_usd"],
+            "chart_labels": {
+                "supply": "BulkSOL Supply",
+                "sol_value": "SOL per BulkSOL",
+                "apy_pct": "Staking APY %",
+                "price_usd": "Price (USD)",
+                "market_cap_usd": "Market Cap (USD)",
+                "total_sol_staked": "Total SOL Staked",
+                "validator_earnings_24h_usd": "Validator Earnings 24h (USD)",
+            },
+        })
+
+    async def _api_bulksol_deployments(self, request):
+        """Where BulkSOL is deployed across DeFi protocols with earnings data."""
+        if not self.bulksol:
+            return web.json_response({"error": "BulkSOL module not initialized"}, status=503)
+        deployments = self.bulksol.get_protocol_deployments()
+        return web.json_response({
+            "deployments": deployments,
+            "summary": {
+                "total_protocols": len(deployments),
+                "protocols_with_yield": sum(1 for d in deployments if d.get("apy")),
+                "largest_deployment": "Exponent Finance (17,943 BulkSOL)",
+            },
+        })
+
+    async def _api_bulksol_validators(self, request):
+        """Validator earnings from Bulk exchange fee share."""
+        if not self.bulksol:
+            return web.json_response({"error": "BulkSOL module not initialized"}, status=503)
+        try:
+            async with aiohttp.ClientSession() as session:
+                earnings = await self.bulksol.estimate_validator_earnings(session)
+            return web.json_response({
+                "earnings": earnings,
+                "validator_info": {
+                    "stake_pool": "3aUmJDNpMHjkxunQEkHTj2chzyryKoH2uQj6YACLD174",
+                    "vote_account": "votem3UdGx5xWFbY9EFbyZ1X2pBuswfR5yd2oB3JAaj",
+                    "active_validators": 1,
+                    "commission": "0%",
+                    "fee_share": "12.5% of all taker fees (USDC)",
+                    "rewards_fee": "2.5%",
+                },
+                "yield_stack": [
+                    {"source": "SOL Inflation", "est_apy": "~6.5%", "type": "base"},
+                    {"source": "Jito MEV Tips", "est_apy": "~0.5-1%", "type": "bonus"},
+                    {"source": "Bulk Fee Share (12.5%)", "est_apy": "~1-2%", "type": "bonus"},
+                ],
+                "staking_page": "https://early.bulk.trade/stake",
+            })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=502)
 

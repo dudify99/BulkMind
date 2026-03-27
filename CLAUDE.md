@@ -1,7 +1,7 @@
 # BulkMind
 
 Self-evolving trading intelligence for Bulk perpetuals exchange (Solana).
-Two pillars: **BulkWatch** (exchange monitoring) + **BulkAlpha** (autonomous trading agents).
+Three pillars: **BulkWatch** (exchange health) + **BulkSOL** (staking analytics) + **BulkAlpha** (autonomous trading agents).
 Stack: Python 3.12+, asyncio, aiohttp, SQLite, bulk-keychain, EvoSkill.
 
 ---
@@ -11,10 +11,14 @@ Stack: Python 3.12+, asyncio, aiohttp, SQLite, bulk-keychain, EvoSkill.
 ```
 main.py               → Orchestrator (asyncio.gather all loops)
 config.py             → Single source of truth for ALL settings
-db.py                 → SQLite layer (latency, trades, issues, candles)
+db.py                 → SQLite layer (latency, trades, issues, candles, snapshots)
 reporter.py           → Telegram alerts (console fallback)
 executor.py           → bulk-keychain wrapper (paper + live modes)
 bulk_watch.py         → BulkWatch: latency, downtime, orderbook, funding
+bulk_stream.py        → BulkStream: WebSocket trade feed, wallet discovery, liquidations
+bulk_profile.py       → BulkProfile: wallet profiling via POST /account
+bulk_sol.py           → BulkSOL: staking analytics, DeFi deployments, validator earnings
+dashboard.py          → FastAPI dashboard + REST API + WebSocket
 ta.py                 → Technical analysis (ATR, EMA, Donchian, breakouts)
 breakout_bot.py       → BreakoutBot agent (Donchian + volume + ATR SL/TP)
 evoskill_integration.py → EvoSkill loop (learns from losing trades)
