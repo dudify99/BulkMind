@@ -1,7 +1,19 @@
 """
 BulkSOL — Staking & LST Analytics Module
 Tracks: supply, holders, APY, DeFi deployments, validator earnings, protocol yields
-Data sources: Solana RPC, Sanctum API, Exponent, Solana Compass
+
+Data sources & citations:
+  - Token mint: https://app.sanctum.so/explore/BulkSOL
+  - Stake pool: https://solanacompass.com/stake-pools/3aUmJDNpMHjkxunQEkHTj2chzyryKoH2uQj6YACLD174
+  - Supply: Solana RPC getTokenSupply (live)
+  - APY & SOL value: Sanctum API https://extra-api.sanctum.so/v1/apy/latest (live)
+  - Fee structure: Solana Compass stake pool page (verified 2026-03-27)
+  - 12.5% validator fee share: https://chainflow.io/bulk-exchange-the-architecture-that-pays-everyone-to-win/
+  - Taker fee ~6bps: ESTIMATED — Bulk docs do not publish exact fee schedule
+  - Exponent data: https://app.exponent.finance/income/bulksol-20Jun26 (fetched 2026-03-27)
+  - Loopscale: https://app.loopscale.com/loops/bulksol-20jun26-sol
+  - Holder count: Solflare (point-in-time, not live — no free API for holder count)
+  - Liquidity: Solflare (point-in-time, not live)
 """
 
 import asyncio
@@ -53,10 +65,22 @@ DEFI_PROTOCOLS = {
     },
 }
 
-# Fee structure
-BULK_VALIDATOR_FEE_SHARE = 0.125  # 12.5% of taker fees go to validators
-STAKING_REWARDS_FEE = 0.025       # 2.5% pool rewards fee
-SOL_WITHDRAWAL_FEE = 0.001        # 0.1% withdrawal fee
+# Fee structure — verified via Solana Compass stake pool page (2026-03-27)
+# https://solanacompass.com/stake-pools/3aUmJDNpMHjkxunQEkHTj2chzyryKoH2uQj6YACLD174
+STAKING_REWARDS_FEE = 0.025       # 2.5% pool rewards fee ✅ verified
+SOL_WITHDRAWAL_FEE = 0.001        # 0.1% withdrawal fee ✅ verified
+# SOL deposit fee: 0% ✅ verified
+# Stake withdrawal fee: 0.1% ✅ verified
+
+# Validator fee share — from Chainflow article:
+# https://chainflow.io/bulk-exchange-the-architecture-that-pays-everyone-to-win/
+# "BULK distributes 12.5% of all taker fees directly to validators in USDC"
+BULK_VALIDATOR_FEE_SHARE = 0.125  # ✅ cited
+
+# ⚠️ ESTIMATED: taker fee rate not published in Bulk docs
+# Using 6bps (0.06%) as industry-standard perp DEX taker fee
+# Actual fee may differ — update when Bulk publishes fee schedule
+ESTIMATED_TAKER_FEE_RATE = 0.0006
 
 SNAPSHOT_INTERVAL_SEC = 300  # 5 minutes between snapshots
 
@@ -191,8 +215,8 @@ class BulkSOL:
                     vol = float(market.get("volumeUsd", 0) or market.get("volume_value", 0))
                     total_volume_24h += vol
 
-            # Estimate fees: typical taker fee is ~6bps (0.06%)
-            taker_fee_rate = 0.0006
+            # ⚠️ ESTIMATED taker fee — see ESTIMATED_TAKER_FEE_RATE comment
+            taker_fee_rate = ESTIMATED_TAKER_FEE_RATE
             total_fees_24h = total_volume_24h * taker_fee_rate
             validator_share_24h = total_fees_24h * BULK_VALIDATOR_FEE_SHARE
 
@@ -203,6 +227,8 @@ class BulkSOL:
                 "validator_share_annual_usd": round(validator_share_24h * 365, 2),
                 "fee_share_pct": BULK_VALIDATOR_FEE_SHARE * 100,
                 "note": "12.5% of taker fees paid in USDC to validators, then to delegators",
+                "fee_share_citation": "https://chainflow.io/bulk-exchange-the-architecture-that-pays-everyone-to-win/",
+                "taker_fee_note": "⚠️ ESTIMATED at 6bps — Bulk does not publish exact fee schedule",
             }
         except Exception as e:
             return {"error": str(e)}
@@ -210,57 +236,69 @@ class BulkSOL:
     # ── DeFi Protocol Earnings ────────────────────────────────
 
     def get_protocol_deployments(self) -> list:
-        """Return known DeFi protocol deployments with their yield data."""
+        """Return known DeFi protocol deployments with their yield data.
+        Each entry includes a 'citation' field for data provenance.
+        ⚠️ = point-in-time snapshot (may be stale), ✅ = live/verified
+        """
         return [
             {
                 "protocol": "Sanctum (Base Staking)",
                 "type": "LST Infrastructure",
-                "bulksol_deposited": "All supply (127,257 BulkSOL)",
-                "apy": "5.77%",
+                "bulksol_deposited": None,  # = total supply, fetched live
+                "apy": None,  # fetched live from Sanctum API
                 "yield_source": "SOL inflation + Jito MEV + Bulk fee share",
                 "maturity": None,
                 "url": "https://app.sanctum.so/explore/BulkSOL",
                 "earnings_note": "Base layer — all BulkSOL earns this",
+                "citation": "https://app.sanctum.so/explore/BulkSOL",
+                "data_freshness": "live",
             },
             {
                 "protocol": "Exponent Finance",
                 "type": "PT/YT Yield Splitting",
-                "bulksol_deposited": "17,943 BulkSOL",
-                "deposited_value_usd": 17943 * 92.56,
-                "apy": "8.04% (implied)",
-                "underlying_yield": "5.70%",
-                "pt_price": 0.9815,
-                "yt_implied_rate": "8.04%",
-                "fixed_rate": "7.32%",
-                "vault_fee": "5.50%",
+                "bulksol_deposited": 17943,  # ⚠️ fetched 2026-03-27T00:50Z
+                "apy": "8.04% (implied)",    # ⚠️ fetched 2026-03-27T00:50Z
+                "underlying_yield": "5.70%", # ⚠️ fetched 2026-03-27T00:50Z
+                "pt_price": 0.9815,          # ⚠️ fetched 2026-03-27T00:50Z
+                "yt_implied_rate": "8.04%",  # ⚠️ fetched 2026-03-27T00:50Z
+                "fixed_rate": "7.32%",       # ⚠️ fetched 2026-03-27T00:50Z
+                "vault_fee": "5.50%",        # ⚠️ fetched 2026-03-27T00:50Z
                 "maturity": "Jun 20, 2026",
                 "url": "https://app.exponent.finance/income/bulksol-20Jun26",
                 "earnings_note": "PT holders lock in 7.32% fixed; YT holders get floating yield",
+                "citation": "https://app.exponent.finance/income/bulksol-20Jun26",
+                "data_freshness": "snapshot_2026-03-27",
             },
             {
                 "protocol": "Loopscale",
                 "type": "Leveraged Yield Loops",
-                "bulksol_deposited": "Active (exact TBD)",
-                "apy": "Variable (leveraged)",
+                "bulksol_deposited": None,  # page was client-rendered, couldn't scrape
+                "apy": None,  # variable, depends on leverage
                 "maturity": "Jun 2026",
                 "url": "https://app.loopscale.com/loops/bulksol-20jun26-sol",
                 "earnings_note": "Leveraged yield via order-book lending",
+                "citation": "https://app.loopscale.com/loops/bulksol-20jun26-sol",
+                "data_freshness": "unverified — page not scrapable",
             },
             {
                 "protocol": "Bulk Exchange",
                 "type": "Perp Trading Collateral",
-                "bulksol_deposited": "Unknown (native)",
-                "apy": "5.77% (continues earning while used as margin)",
+                "bulksol_deposited": None,  # not exposed via API
+                "apy": None,  # same as base staking APY
                 "url": "https://early.bulk.trade",
                 "earnings_note": "BulkSOL earns staking yield even when posted as perp collateral",
+                "citation": "https://chainflow.io/bulk-exchange-the-architecture-that-pays-everyone-to-win/",
+                "data_freshness": "architecture confirmed, no live deposit data",
             },
             {
                 "protocol": "Kamino",
                 "type": "Lending/Borrowing",
-                "bulksol_deposited": "Listed as integration",
-                "apy": "Variable",
+                "bulksol_deposited": None,  # mentioned in Chainflow article, not verified on Kamino
+                "apy": None,
                 "url": "https://app.kamino.finance",
-                "earnings_note": "Supply-side lending yield on BulkSOL",
+                "earnings_note": "Mentioned as composable collateral integration",
+                "citation": "https://chainflow.io/bulk-exchange-the-architecture-that-pays-everyone-to-win/",
+                "data_freshness": "mentioned in article, not independently verified",
             },
         ]
 
@@ -341,8 +379,8 @@ class BulkSOL:
         bulksol_apy = apys.get("BulkSOL", 0) if "error" not in apys else 0
         bulksol_sol_value = sol_values.get("BulkSOL", 1.0) if "error" not in sol_values else 1.0
 
-        # Get SOL price from Bulk API ticker
-        sol_price_usd = 86.28  # fallback
+        # Get SOL price from Bulk API ticker (live)
+        sol_price_usd = 0  # no fallback — must fetch live
         try:
             async with session.get(
                 f"{BULK_API_BASE}/ticker/SOL-USD",
@@ -373,20 +411,28 @@ class BulkSOL:
                 "total_bulksol": round(bulksol_supply, 2),
                 "total_sol_staked": round(bulksol_supply * bulksol_sol_value, 2),
                 "sol_value": bulksol_sol_value,
-                "holders": 2334,  # from Solflare (updated via snapshots)
+                # ⚠️ Holder count: no free live API available
+                # Snapshot from Solflare 2026-03-27. Updates require manual check or paid API.
+                "holders": 2334,
+                "holders_citation": "https://www.solflare.com/prices/bulk-staked-sol/BULKoNSGzxtCqzwTvg5hFJg8fx6dqZRScyXe5LYMfxrn/",
+                "holders_freshness": "snapshot_2026-03-27",
             },
             "price": {
                 "bulksol_usd": round(bulksol_price, 2),
                 "sol_usd": round(sol_price_usd, 2),
                 "market_cap_usd": round(bulksol_supply * bulksol_price, 2),
-                "liquidity_usd": 12120000,  # from Solflare
+                # ⚠️ Liquidity: from Solflare, point-in-time, no live API
+                "liquidity_usd": 12120000,
+                "liquidity_citation": "https://www.solflare.com/prices/bulk-staked-sol/BULKoNSGzxtCqzwTvg5hFJg8fx6dqZRScyXe5LYMfxrn/",
+                "liquidity_freshness": "snapshot_2026-03-27",
             },
             "yield": {
                 "bulksol_apy_pct": bulksol_apy,
+                "bulksol_apy_citation": "Sanctum API /v1/apy/latest (live)",
                 "yield_sources": [
-                    "SOL inflation rewards (~6.5%)",
-                    "Jito MEV tip distributions",
-                    f"12.5% of Bulk taker fees (USDC)",
+                    {"source": "SOL inflation rewards", "citation": "Solana staking baseline"},
+                    {"source": "Jito MEV tip distributions", "citation": "Bulk runs Bulk-agave (forked Jito-agave)"},
+                    {"source": "12.5% of Bulk taker fees (USDC)", "citation": "https://chainflow.io/bulk-exchange-the-architecture-that-pays-everyone-to-win/"},
                 ],
                 "competitor_apys": {k: v for k, v in apys.items() if k != "BulkSOL"} if "error" not in apys else {},
             },
