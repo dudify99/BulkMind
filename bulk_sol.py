@@ -21,7 +21,10 @@ import aiohttp
 import json
 from datetime import datetime
 from db import get_conn, log_issue
-from config import BULK_API_BASE
+from config import (
+    BULK_API_BASE, BULKSOL_LIVE_CHECK_SEC,
+    BULKSOL_SNAPSHOT_SEC, BULKSOL_SUPPLY_ALERT_PCT
+)
 from reporter import Reporter
 
 # ── Constants ─────────────────────────────────────────────────
@@ -82,7 +85,9 @@ BULK_VALIDATOR_FEE_SHARE = 0.125  # ✅ cited
 # Actual fee may differ — update when Bulk publishes fee schedule
 ESTIMATED_TAKER_FEE_RATE = 0.0006
 
-SNAPSHOT_INTERVAL_SEC = 300  # 5 minutes between snapshots
+# Intervals imported from config.py:
+# BULKSOL_LIVE_CHECK_SEC = 300 (5 min) — fetch live stats for dashboard
+# BULKSOL_SNAPSHOT_SEC = 21600 (6h) — persist to DB for charts
 
 
 class BulkSOL:
@@ -363,7 +368,8 @@ class BulkSOL:
 
     # ── Full Dashboard Data ───────────────────────────────────
 
-    async def get_full_stats(self, session: aiohttp.ClientSession) -> dict:
+    async def get_full_stats(self, session: aiohttp.ClientSession,
+                             persist: bool = False) -> dict:
         """Aggregate all BulkSOL data for dashboard display."""
         # Run all queries concurrently
         supply_task = self.get_supply(session)
@@ -451,14 +457,14 @@ class BulkSOL:
             "fetched_at": datetime.utcnow().isoformat(),
         }
 
-        # Save snapshot for historical tracking
-        validator_earnings_24h = earnings.get("validator_share_24h_usd", 0) if "error" not in earnings else 0
-        if bulksol_supply > 0:
+        # Only persist if explicitly asked (run() loop handles the 6h schedule)
+        if persist and bulksol_supply > 0:
+            validator_earnings_24h = earnings.get("validator_share_24h_usd", 0) if "error" not in earnings else 0
             self.save_snapshot(
                 supply=bulksol_supply,
                 sol_value=bulksol_sol_value,
                 apy=bulksol_apy,
-                holders=2334,
+                holders=result["supply"].get("holders", 0),
                 sol_price_usd=sol_price_usd,
                 validator_earnings_24h=validator_earnings_24h,
             )
@@ -468,14 +474,25 @@ class BulkSOL:
     # ── Main Loop ─────────────────────────────────────────────
 
     async def run(self):
-        """Periodic BulkSOL stats collection loop."""
+        """Periodic BulkSOL stats collection loop.
+        - Every 5 min: fetch live stats, serve to dashboard, check alerts
+        - Every 6 hours: persist snapshot to DB for historical charts
+        """
         print("🪙  BulkSOL analytics started")
+        print(f"    Live check: every {BULKSOL_LIVE_CHECK_SEC}s")
+        print(f"    DB snapshot: every {BULKSOL_SNAPSHOT_SEC}s ({BULKSOL_SNAPSHOT_SEC//3600}h)")
         await asyncio.sleep(10)  # let other services start first
+
+        self._last_snapshot_ts = None
+        self._cached_stats = None  # latest stats for dashboard
 
         async with aiohttp.ClientSession() as session:
             while True:
                 try:
-                    stats = await self.get_full_stats(session)
+                    # Always fetch live stats (5 API calls, free)
+                    stats = await self.get_full_stats(session, persist=False)
+                    self._cached_stats = stats
+
                     supply = stats["supply"]["total_bulksol"]
                     apy = stats["yield"]["bulksol_apy_pct"]
                     price = stats["price"]["bulksol_usd"]
@@ -489,7 +506,7 @@ class BulkSOL:
                     # Alert on significant changes
                     if self._last_supply and supply > 0:
                         change_pct = (supply - self._last_supply) / self._last_supply * 100
-                        if abs(change_pct) > 5:
+                        if abs(change_pct) > BULKSOL_SUPPLY_ALERT_PCT:
                             await self.reporter.alert(
                                 f"🪙 BulkSOL Supply Change: {change_pct:+.1f}%\n"
                                 f"Previous: {self._last_supply:,.0f}\n"
@@ -497,9 +514,31 @@ class BulkSOL:
                             )
                     self._last_supply = supply
 
+                    # Persist snapshot every 6 hours
+                    now = datetime.utcnow()
+                    should_snapshot = (
+                        self._last_snapshot_ts is None or
+                        (now - self._last_snapshot_ts).total_seconds() >= BULKSOL_SNAPSHOT_SEC
+                    )
+                    if should_snapshot and supply > 0:
+                        bulksol_sol_value = stats["supply"]["sol_value"]
+                        sol_price_usd = stats["price"]["sol_usd"]
+                        validator_earnings_24h = earnings.get("validator_share_24h_usd", 0)
+
+                        self.save_snapshot(
+                            supply=supply,
+                            sol_value=bulksol_sol_value,
+                            apy=apy,
+                            holders=stats["supply"].get("holders", 0),
+                            sol_price_usd=sol_price_usd,
+                            validator_earnings_24h=validator_earnings_24h,
+                        )
+                        self._last_snapshot_ts = now
+                        print(f"🪙  Snapshot saved to DB (next in {BULKSOL_SNAPSHOT_SEC//3600}h)")
+
                 except Exception as e:
                     print(f"🪙  BulkSOL error: {e}")
                     log_issue("MEDIUM", "SYSTEM",
                               "BulkSOL analytics error", str(e))
 
-                await asyncio.sleep(SNAPSHOT_INTERVAL_SEC)
+                await asyncio.sleep(BULKSOL_LIVE_CHECK_SEC)

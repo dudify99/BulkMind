@@ -56,6 +56,11 @@ WALLET_REFRESH_HOURS         = 6       # re-profile wallet after N hours
 LIQUIDATION_ALERT_THRESHOLD_USD = 10000  # alert if liquidation above this
 WATCHED_SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD"]
 
+# ── BulkSOL Analytics ────────────────────────────────────────
+BULKSOL_LIVE_CHECK_SEC   = 300        # 5 min — fetch live stats for dashboard
+BULKSOL_SNAPSHOT_SEC     = 6 * 3600   # 6 hours — persist snapshot to DB for charts
+BULKSOL_SUPPLY_ALERT_PCT = 5          # alert if supply changes more than 5%
+
 # ── Storage ────────────────────────────────────────────────────
 DB_PATH = "data/bulkmind.db"
 
