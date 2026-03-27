@@ -1,6 +1,6 @@
 """
 BulkMind — Main Orchestrator
-Runs BulkWatch + BreakoutBot + Dashboard in parallel async loops
+Runs BulkWatch + BulkStream + BulkProfile + BreakoutBot + Dashboard in parallel
 """
 
 import asyncio
@@ -9,6 +9,8 @@ from db import init_db
 from reporter import Reporter
 from executor import BulkClient, BulkExecutor
 from bulk_watch import BulkWatch
+from bulk_stream import BulkStream
+from bulk_profile import BulkProfile
 from breakout_bot import BreakoutBot
 from dashboard import Dashboard
 from evoskill_integration import run_evoskill_loop
@@ -33,12 +35,16 @@ async def main():
         client   = BulkClient(session)
         executor = BulkExecutor(client, paper=BREAKOUT_PAPER_MODE)
 
-        watch    = BulkWatch(reporter, client=client)
-        bot      = BreakoutBot(executor, client, reporter)
+        watch   = BulkWatch(reporter)
+        stream  = BulkStream(reporter)
+        profile = BulkProfile(reporter)
+        bot     = BreakoutBot(executor, client, reporter)
 
         await reporter.send(
             "🟢 *BulkMind Online*\n"
             f"BulkWatch: ✅\n"
+            f"BulkStream: ✅\n"
+            f"BulkProfile: ✅\n"
             f"BreakoutBot: ✅\n"
             f"Dashboard: ✅\n"
             f"Mode: `{'PAPER' if BREAKOUT_PAPER_MODE else 'LIVE'}`"
@@ -46,10 +52,12 @@ async def main():
 
         # Run all loops concurrently
         await asyncio.gather(
-            dashboard.run(),     # Web dashboard + API
-            watch.run(),         # BulkWatch monitoring loop
-            bot.run(),           # BreakoutBot trading loop
-            evoskill_schedule(), # Periodic EvoSkill improvement
+            dashboard.run(),      # Web dashboard + API
+            watch.run(),          # BulkWatch: exchange health
+            stream.run(),         # BulkStream: live trade feed
+            profile.run(),        # BulkProfile: wallet discovery
+            bot.run(),            # BreakoutBot: trading agent
+            evoskill_schedule(),  # Periodic EvoSkill improvement
         )
 
 
