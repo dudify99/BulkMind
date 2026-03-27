@@ -47,6 +47,15 @@ EVOSKILL_FRONTIER_SIZE  = 3
 EVOSKILL_TRAIN_RATIO    = 0.7
 EVOSKILL_VAL_RATIO      = 0.3
 
+# ── Wallet Discovery & Trade Stream ───────────────────────────
+WATCH_WS_RECONNECT_SEC       = 5       # WebSocket reconnect delay
+WALLET_PROFILE_INTERVAL_SEC  = 10      # delay between account queries
+WALLET_PROFILE_BATCH_SIZE    = 20      # max wallets to profile per cycle
+WALLET_DISCOVERY_MAX_QUEUE   = 500     # max pending wallets
+WALLET_REFRESH_HOURS         = 6       # re-profile wallet after N hours
+LIQUIDATION_ALERT_THRESHOLD_USD = 10000  # alert if liquidation above this
+WATCHED_SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD"]
+
 # ── Storage ────────────────────────────────────────────────────
 DB_PATH = "data/bulkmind.db"
 

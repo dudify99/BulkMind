@@ -8,7 +8,12 @@ import json
 import aiohttp
 from datetime import datetime
 from aiohttp import web
-from db import get_conn, get_open_trades, get_agent_stats, get_top_traders, search_wallets, get_wallet_profile, get_leaderboard, get_analytics, get_whales
+from db import (
+    get_conn, get_open_trades, get_agent_stats, get_top_traders,
+    search_wallets, get_wallet_profile, get_leaderboard, get_analytics,
+    get_whales, get_liquidation_stats, get_recent_liquidations,
+    get_exchange_summary, get_observed_trades
+)
 from reporter import Reporter
 from config import DASHBOARD_HOST, DASHBOARD_PORT, BREAKOUT_PAPER_MODE, BULK_API_BASE
 from pathlib import Path
@@ -39,6 +44,10 @@ class Dashboard:
         self.app.router.add_get("/api/whales", self._api_whales)
         self.app.router.add_get("/api/market", self._api_market)
         self.app.router.add_get("/api/exchange-stats", self._api_exchange_stats)
+        self.app.router.add_get("/api/exchange-summary", self._api_exchange_summary)
+        self.app.router.add_get("/api/liquidations", self._api_liquidations)
+        self.app.router.add_get("/api/liquidations/stats", self._api_liquidation_stats)
+        self.app.router.add_get("/api/trades/feed", self._api_trades_feed)
         self.app.router.add_get("/api/account/{pubkey}", self._api_account)
         self.app.router.add_get("/api/account/{pubkey}/fills", self._api_account_fills)
         self.app.router.add_get("/api/account/{pubkey}/positions", self._api_account_positions)
@@ -190,6 +199,30 @@ class Dashboard:
             "fetched_at": datetime.utcnow().isoformat() + "Z",
             "tickers": tickers,
         })
+
+    async def _api_exchange_summary(self, request):
+        """Real exchange summary from observed trade data."""
+        data = get_exchange_summary()
+        return web.json_response(data)
+
+    async def _api_liquidations(self, request):
+        """Recent liquidation events."""
+        limit = int(request.query.get("limit", "50"))
+        data = get_recent_liquidations(limit)
+        return web.json_response(data)
+
+    async def _api_liquidation_stats(self, request):
+        """Aggregated liquidation stats — longs vs shorts."""
+        hours = int(request.query.get("hours", "24"))
+        data = get_liquidation_stats(hours)
+        return web.json_response(data)
+
+    async def _api_trades_feed(self, request):
+        """Recent observed trades from the WebSocket feed."""
+        limit = int(request.query.get("limit", "50"))
+        symbol = request.query.get("symbol", None)
+        data = get_observed_trades(limit, symbol)
+        return web.json_response(data)
 
     async def _api_exchange_stats(self, request):
         """Fetch live exchange stats from GET /stats."""

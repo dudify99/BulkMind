@@ -33,7 +33,7 @@ async def main():
         client   = BulkClient(session)
         executor = BulkExecutor(client, paper=BREAKOUT_PAPER_MODE)
 
-        watch    = BulkWatch(reporter)
+        watch    = BulkWatch(reporter, client=client)
         bot      = BreakoutBot(executor, client, reporter)
 
         await reporter.send(

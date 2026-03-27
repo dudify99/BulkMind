@@ -177,6 +177,56 @@ def init_db():
         )
     """)
 
+    # ── Trade Stream / Wallet Discovery Tables ─────────────
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS observed_trades (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT NOT NULL,
+            symbol      TEXT NOT NULL,
+            side        TEXT NOT NULL,
+            price       REAL NOT NULL,
+            size        REAL NOT NULL,
+            maker       TEXT,
+            taker       TEXT,
+            reason      TEXT DEFAULT 'normal',
+            raw_data    TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS liquidations (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT NOT NULL,
+            symbol      TEXT NOT NULL,
+            side        TEXT NOT NULL,
+            price       REAL NOT NULL,
+            size        REAL NOT NULL,
+            value_usd   REAL NOT NULL,
+            wallet      TEXT,
+            raw_data    TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS wallet_discovery (
+            wallet      TEXT PRIMARY KEY,
+            first_seen  TEXT NOT NULL,
+            last_profiled TEXT,
+            trade_count INTEGER DEFAULT 1,
+            status      TEXT DEFAULT 'pending'
+        )
+    """)
+
+    # ── Indexes ──────────────────────────────────────────────
+    c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_ts ON observed_trades(ts)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_maker ON observed_trades(maker)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_taker ON observed_trades(taker)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_liquidations_ts ON liquidations(ts)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_wallet_discovery_status ON wallet_discovery(status, last_profiled)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_traders_wallet ON traders(wallet)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_traders_ts ON traders(ts)")
+
     conn.commit()
     conn.close()
     print("✅ Database initialized")
@@ -583,6 +633,192 @@ def get_whales(min_balance: float = 50000) -> list:
 
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── Trade Stream / Wallet Discovery Helpers ──────────────────
+
+def log_observed_trade(symbol: str, side: str, price: float, size: float,
+                       maker: str = None, taker: str = None,
+                       reason: str = "normal", raw_data: str = None):
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO observed_trades (ts, symbol, side, price, size, maker, taker, reason, raw_data)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (datetime.utcnow().isoformat(), symbol, side, price, size,
+         maker, taker, reason, raw_data)
+    )
+    conn.commit()
+    conn.close()
+
+
+def log_liquidation(symbol: str, side: str, price: float, size: float,
+                    value_usd: float, wallet: str = None, raw_data: str = None):
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO liquidations (ts, symbol, side, price, size, value_usd, wallet, raw_data)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (datetime.utcnow().isoformat(), symbol, side, price, size,
+         value_usd, wallet, raw_data)
+    )
+    conn.commit()
+    conn.close()
+
+
+def upsert_discovered_wallet(wallet: str):
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO wallet_discovery (wallet, first_seen, trade_count)
+           VALUES (?, ?, 1)
+           ON CONFLICT(wallet) DO UPDATE SET trade_count = trade_count + 1""",
+        (wallet, datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_pending_wallets(limit: int = 20) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT wallet FROM wallet_discovery
+           WHERE status = 'pending'
+              OR (status = 'profiled' AND last_profiled < datetime('now', '-6 hours'))
+           ORDER BY trade_count DESC
+           LIMIT ?""",
+        (limit,)
+    ).fetchall()
+    conn.close()
+    return [r["wallet"] for r in rows]
+
+
+def mark_wallet_profiled(wallet: str):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE wallet_discovery SET status='profiled', last_profiled=?
+           WHERE wallet=?""",
+        (datetime.utcnow().isoformat(), wallet)
+    )
+    conn.commit()
+    conn.close()
+
+
+def upsert_wallet_balance(wallet: str, balance_usd: float, equity_usd: float,
+                           unrealized_pnl: float = 0, margin_used: float = 0):
+    conn = get_conn()
+    conn.execute(
+        """INSERT OR REPLACE INTO wallet_balances
+           (wallet, balance_usd, equity_usd, unrealized_pnl, margin_used, updated_at)
+           VALUES (?,?,?,?,?,?)""",
+        (wallet, balance_usd, equity_usd, unrealized_pnl, margin_used,
+         datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def upsert_trader_record(wallet: str, symbol: str, side: str,
+                          pnl_usd: float, pnl_pct: float,
+                          volume_usd: float, trades_count: int):
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO traders (ts, wallet, symbol, side, pnl_usd, pnl_pct, volume_usd, trades_count)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (datetime.utcnow().isoformat(), wallet, symbol, side,
+         round(pnl_usd, 2), round(pnl_pct, 2), round(volume_usd, 2), trades_count)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_liquidation_stats(hours: int = 24) -> dict:
+    conn = get_conn()
+    longs = conn.execute(
+        """SELECT COUNT(*) as count, COALESCE(SUM(value_usd), 0) as total_usd
+           FROM liquidations WHERE side='LONG' AND ts > datetime('now', ?)""",
+        (f"-{hours} hours",)
+    ).fetchone()
+    shorts = conn.execute(
+        """SELECT COUNT(*) as count, COALESCE(SUM(value_usd), 0) as total_usd
+           FROM liquidations WHERE side='SHORT' AND ts > datetime('now', ?)""",
+        (f"-{hours} hours",)
+    ).fetchone()
+    conn.close()
+    return {
+        "longs_liquidated": longs["count"],
+        "longs_value_usd": round(longs["total_usd"], 2),
+        "shorts_liquidated": shorts["count"],
+        "shorts_value_usd": round(shorts["total_usd"], 2),
+        "total_count": longs["count"] + shorts["count"],
+        "total_value_usd": round(longs["total_usd"] + shorts["total_usd"], 2),
+    }
+
+
+def get_recent_liquidations(limit: int = 50) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM liquidations ORDER BY ts DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_exchange_summary() -> dict:
+    conn = get_conn()
+    total_observed = conn.execute(
+        "SELECT COUNT(*) as c FROM observed_trades"
+    ).fetchone()["c"]
+    observed_24h = conn.execute(
+        "SELECT COUNT(*) as c FROM observed_trades WHERE ts > datetime('now', '-24 hours')"
+    ).fetchone()["c"]
+    unique_wallets = conn.execute(
+        "SELECT COUNT(*) as c FROM wallet_discovery"
+    ).fetchone()["c"]
+    profiled_wallets = conn.execute(
+        "SELECT COUNT(*) as c FROM wallet_discovery WHERE status='profiled'"
+    ).fetchone()["c"]
+    active_24h = conn.execute(
+        """SELECT COUNT(DISTINCT wallet) as c FROM (
+            SELECT maker as wallet FROM observed_trades WHERE ts > datetime('now', '-24 hours') AND maker IS NOT NULL
+            UNION
+            SELECT taker as wallet FROM observed_trades WHERE ts > datetime('now', '-24 hours') AND taker IS NOT NULL
+        )"""
+    ).fetchone()["c"]
+    open_positions = conn.execute(
+        "SELECT COUNT(*) as c FROM trade_history WHERE status='OPEN'"
+    ).fetchone()["c"]
+    conn.close()
+    return {
+        "total_observed_trades": total_observed,
+        "observed_trades_24h": observed_24h,
+        "unique_wallets_discovered": unique_wallets,
+        "wallets_profiled": profiled_wallets,
+        "active_wallets_24h": active_24h,
+        "open_positions": open_positions,
+    }
+
+
+def get_observed_trades(limit: int = 50, symbol: str = None) -> list:
+    conn = get_conn()
+    if symbol:
+        rows = conn.execute(
+            "SELECT * FROM observed_trades WHERE symbol=? ORDER BY ts DESC LIMIT ?",
+            (symbol, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM observed_trades ORDER BY ts DESC LIMIT ?", (limit,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def cleanup_old_observed_trades(days: int = 7):
+    conn = get_conn()
+    conn.execute(
+        "DELETE FROM observed_trades WHERE ts < datetime('now', ?)",
+        (f"-{days} days",)
+    )
+    conn.commit()
+    conn.close()
 
 
 if __name__ == "__main__":
