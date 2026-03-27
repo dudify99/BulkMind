@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 # ── API Endpoints ──────────────────────────────────────────────
-BULK_API_BASE = "https://api.bulk.exchange/api/v1"
-BULK_WS_URL   = "wss://api.bulk.exchange/ws"
+BULK_API_BASE = "https://exchange-api.bulk.trade/api/v1"
+BULK_WS_URL   = "wss://exchange-ws1.bulk.trade"
 
 # ── Credentials (set via env vars, never hardcode) ─────────────
 BULK_PRIVATE_KEY   = os.getenv("BULK_PRIVATE_KEY", "")

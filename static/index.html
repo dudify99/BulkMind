@@ -13,9 +13,11 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
 
+  /* ── Header ──────────────────────────────────── */
   .header {
     background: var(--surface); border-bottom: 1px solid var(--border);
-    padding: 16px 24px; display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 100;
   }
   .header h1 { font-size: 20px; font-weight: 600; }
   .header h1 span { color: var(--accent); }
@@ -26,9 +28,30 @@
   .status-online { background: rgba(63,185,80,0.15); color: var(--green); }
   .status-offline { background: rgba(248,81,73,0.15); color: var(--red); }
   .mode-badge { background: rgba(188,140,255,0.15); color: var(--purple); padding: 4px 10px; border-radius: 12px; font-size: 12px; }
+  .data-badge-live { background: rgba(63,185,80,0.15); color: var(--green); padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .data-badge-sim { background: rgba(188,140,255,0.15); color: var(--purple); padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .data-disclaimer { font-size: 12px; color: var(--muted); padding: 8px 12px; background: rgba(139,148,158,0.08); border-radius: 6px; margin-bottom: 16px; border-left: 3px solid var(--border); }
 
+  /* ── Navigation ──────────────────────────────── */
+  .nav-bar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 24px; display: flex; gap: 0; position: sticky; top: 49px; z-index: 99;
+  }
+  .nav-tab {
+    padding: 12px 20px; font-size: 14px; font-weight: 500; color: var(--muted);
+    cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s;
+    background: none; border-top: none; border-left: none; border-right: none;
+    font-family: inherit;
+  }
+  .nav-tab:hover { color: var(--text); background: rgba(88,166,255,0.04); }
+  .nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Tab Content ─────────────────────────────── */
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Grid & Cards ────────────────────────────── */
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; padding: 24px; }
-
   .card {
     background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
     padding: 20px; transition: border-color 0.2s;
@@ -37,14 +60,16 @@
   .card h2 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
   .card .value { font-size: 28px; font-weight: 700; }
   .card .sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
-
   .wide { grid-column: 1 / -1; }
 
+  /* ── Tables ──────────────────────────────────── */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; padding: 10px 12px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
   td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
   tr:hover td { background: rgba(88,166,255,0.04); }
+  tr.highlighted td { background: rgba(88,166,255,0.12); border-left: 3px solid var(--accent); }
 
+  /* ── Tags ────────────────────────────────────── */
   .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
   .tag-buy { background: rgba(63,185,80,0.15); color: var(--green); }
   .tag-sell { background: rgba(248,81,73,0.15); color: var(--red); }
@@ -56,6 +81,7 @@
   .tag-medium { background: rgba(88,166,255,0.15); color: var(--accent); }
   .tag-low { background: rgba(139,148,158,0.15); color: var(--muted); }
 
+  /* ── Feed ────────────────────────────────────── */
   .feed { max-height: 300px; overflow-y: auto; }
   .feed-item {
     padding: 10px 12px; border-bottom: 1px solid var(--border);
@@ -68,14 +94,96 @@
   .ws-connected { background: var(--green); }
   .ws-disconnected { background: var(--red); }
 
-  @media (max-width: 768px) { .grid { padding: 12px; gap: 12px; } }
+  /* ── Copy Button ─────────────────────────────── */
+  .copy-btn {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    padding: 2px 4px; font-size: 12px; border-radius: 3px; transition: all 0.15s;
+    vertical-align: middle; position: relative;
+  }
+  .copy-btn:hover { color: var(--accent); background: rgba(88,166,255,0.1); }
+  .copy-btn .tooltip {
+    display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    background: var(--accent); color: #fff; padding: 3px 8px; border-radius: 4px;
+    font-size: 10px; white-space: nowrap; margin-bottom: 4px;
+  }
+  .copy-btn.copied .tooltip { display: block; }
+
+  /* ── Pill Toggles ────────────────────────────── */
+  .pill-group { display: inline-flex; gap: 4px; margin-bottom: 16px; }
+  .pill {
+    padding: 6px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;
+    cursor: pointer; border: 1px solid var(--border); background: var(--bg);
+    color: var(--muted); transition: all 0.15s; font-family: inherit;
+  }
+  .pill:hover { border-color: var(--accent); color: var(--text); }
+  .pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* ── Sub-tabs ────────────────────────────────── */
+  .sub-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .sub-tab {
+    padding: 10px 18px; font-size: 13px; font-weight: 500; color: var(--muted);
+    cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s;
+    background: none; border-top: none; border-left: none; border-right: none;
+    font-family: inherit;
+  }
+  .sub-tab:hover { color: var(--text); }
+  .sub-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Search Box ──────────────────────────────── */
+  .search-box {
+    display: flex; gap: 8px; margin-bottom: 16px;
+  }
+  .search-box input {
+    flex: 1; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 14px; font-family: monospace; outline: none;
+  }
+  .search-box input:focus { border-color: var(--accent); }
+  .search-box button {
+    padding: 10px 20px; background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; font-family: inherit;
+  }
+  .search-box button:hover { opacity: 0.9; }
+
+  /* ── Analytics stat cards ────────────────────── */
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 20px; text-align: center;
+  }
+  .stat-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .big { font-size: 28px; font-weight: 700; margin-top: 8px; }
+  .stat-card .detail { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* ── Whale Alert Feed ────────────────────────── */
+  .whale-alert {
+    padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex;
+    align-items: center; gap: 10px; font-size: 13px;
+  }
+  .whale-alert .whale-icon { font-size: 18px; }
+  .whale-alert .alert-time { color: var(--muted); font-size: 11px; min-width: 60px; }
+
+  /* ── Chart placeholders ──────────────────────── */
+  .chart-placeholder {
+    background: var(--bg); border: 1px dashed var(--border); border-radius: 8px;
+    padding: 40px; text-align: center; color: var(--muted); font-size: 14px;
+    min-height: 200px; display: flex; align-items: center; justify-content: center;
+  }
+
+  @media (max-width: 768px) {
+    .grid { padding: 12px; gap: 12px; }
+    .nav-tab { padding: 10px 12px; font-size: 13px; }
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+  }
 </style>
 </head>
 <body>
 
+<!-- ═══════ HEADER ═══════ -->
 <div class="header">
   <h1><span>Bulk</span>Mind</h1>
   <div style="display:flex;align-items:center;gap:12px;">
+    <span class="data-badge-live" title="Market data from Bulk Exchange API">&#x1F4E1; Live Market Data</span>
+    <span class="data-badge-sim" title="Trader data is simulated">&#x1F9EA; Simulated Traders</span>
     <span class="mode-badge" id="mode">--</span>
     <span class="status-badge status-offline" id="status">
       <span class="ws-dot ws-disconnected" id="ws-dot"></span>
@@ -84,6 +192,18 @@
   </div>
 </div>
 
+<!-- ═══════ NAVIGATION ═══════ -->
+<div class="nav-bar">
+  <button class="nav-tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</button>
+  <button class="nav-tab" data-tab="leaderboard" onclick="switchTab('leaderboard')">Leaderboard</button>
+  <button class="nav-tab" data-tab="analytics" onclick="switchTab('analytics')">Analytics</button>
+  <button class="nav-tab" data-tab="whales" onclick="switchTab('whales')">Whale Tracker</button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 1: DASHBOARD
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-dashboard" class="tab-content active">
 <div class="grid">
   <!-- Stats Cards -->
   <div class="card">
@@ -107,6 +227,79 @@
     <div class="sub" id="issue-count">-- open issues</div>
   </div>
 
+  <!-- Wallet Explorer -->
+  <div class="card wide">
+    <h2>Wallet Explorer</h2>
+    <div class="search-box">
+      <input type="text" id="explorer-search" placeholder="Search wallet address (min 3 chars)..." />
+      <button onclick="doSearch()">Search</button>
+    </div>
+    <div id="search-results" style="display:none;margin-bottom:16px;max-height:200px;overflow-y:auto;">
+      <table style="font-size:12px;">
+        <thead><tr><th>Wallet</th><th>Total PnL</th><th>Volume</th><th>Trades</th><th></th></tr></thead>
+        <tbody id="search-results-table"></tbody>
+      </table>
+    </div>
+    <div id="wallet-profile" style="display:none;">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px;">
+        <div style="background:var(--bg);padding:12px;border-radius:6px;text-align:center;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Balance</div>
+          <div id="wp-balance" style="font-size:18px;font-weight:700;margin-top:4px;">--</div>
+        </div>
+        <div style="background:var(--bg);padding:12px;border-radius:6px;text-align:center;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Equity</div>
+          <div id="wp-equity" style="font-size:18px;font-weight:700;margin-top:4px;">--</div>
+        </div>
+        <div style="background:var(--bg);padding:12px;border-radius:6px;text-align:center;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Total PnL</div>
+          <div id="wp-pnl" style="font-size:18px;font-weight:700;margin-top:4px;">--</div>
+        </div>
+        <div style="background:var(--bg);padding:12px;border-radius:6px;text-align:center;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Win Rate</div>
+          <div id="wp-winrate" style="font-size:18px;font-weight:700;margin-top:4px;">--</div>
+        </div>
+        <div style="background:var(--bg);padding:12px;border-radius:6px;text-align:center;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Trades</div>
+          <div id="wp-trades" style="font-size:18px;font-weight:700;margin-top:4px;">--</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">
+        <div style="background:var(--bg);padding:12px;border-radius:6px;text-align:center;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Best Trade</div>
+          <div id="wp-best" style="font-size:16px;font-weight:600;color:var(--green);margin-top:4px;">--</div>
+        </div>
+        <div style="background:var(--bg);padding:12px;border-radius:6px;text-align:center;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Worst Trade</div>
+          <div id="wp-worst" style="font-size:16px;font-weight:600;color:var(--red);margin-top:4px;">--</div>
+        </div>
+        <div style="background:var(--bg);padding:12px;border-radius:6px;text-align:center;">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Unrealized PnL</div>
+          <div id="wp-unrealized" style="font-size:16px;font-weight:600;margin-top:4px;">--</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <h2 style="margin-bottom:8px;">Open Positions</h2>
+          <div style="max-height:250px;overflow-y:auto;">
+            <table style="font-size:12px;">
+              <thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Size</th><th>Time</th></tr></thead>
+              <tbody id="wp-open-table"><tr><td colspan="5" style="color:var(--muted)">No open positions</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <h2 style="margin-bottom:8px;">Trade History</h2>
+          <div style="max-height:250px;overflow-y:auto;">
+            <table style="font-size:12px;">
+              <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Status</th></tr></thead>
+              <tbody id="wp-history-table"><tr><td colspan="7" style="color:var(--muted)">No trades</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Open Trades -->
   <div class="card wide">
     <h2>Open Trades</h2>
@@ -123,6 +316,36 @@
       <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Status</th></tr></thead>
       <tbody id="trades-table"><tr><td colspan="7" style="color:var(--muted)">Loading...</td></tr></tbody>
     </table>
+  </div>
+
+  <!-- Traders Leaderboard (mini version on dashboard) -->
+  <div class="card wide">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+      <div>
+        <h2 style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          Top Profitable (24h)
+          <span id="profitable-count" class="tag tag-win">--</span>
+        </h2>
+        <div style="max-height:500px;overflow-y:auto;">
+          <table style="font-size:12px;">
+            <thead><tr><th style="width:30px">#</th><th>Wallet</th><th>PnL</th><th>Avg %</th><th style="width:50px">Trades</th></tr></thead>
+            <tbody id="profitable-table"><tr><td colspan="5" style="color:var(--muted)">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div style="border-left:1px solid var(--border);padding-left:24px;">
+        <h2 style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          Top Losers (24h)
+          <span id="losers-count" class="tag tag-loss">--</span>
+        </h2>
+        <div style="max-height:500px;overflow-y:auto;">
+          <table style="font-size:12px;">
+            <thead><tr><th style="width:30px">#</th><th>Wallet</th><th>PnL</th><th>Avg %</th><th style="width:50px">Trades</th></tr></thead>
+            <tbody id="losers-table"><tr><td colspan="5" style="color:var(--muted)">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Live Feed -->
@@ -151,23 +374,220 @@
     </table>
   </div>
 </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 2: LEADERBOARD
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-leaderboard" class="tab-content">
+<div style="padding:24px;">
+  <div class="data-disclaimer" style="border-left-color:var(--purple);">&#x26A0;&#xFE0F; Simulated data &mdash; Bulk API does not expose per-wallet trading data publicly. Wallet addresses and PnL figures shown here are generated for demonstration purposes.</div>
+  <!-- Sub-tabs -->
+  <div class="sub-tabs">
+    <button class="sub-tab active" data-lb="top_traders" onclick="switchLbTab('top_traders')">Top Traders</button>
+    <button class="sub-tab" data-lb="most_liquidated" onclick="switchLbTab('most_liquidated')">Most Liquidated</button>
+    <button class="sub-tab" data-lb="most_active" onclick="switchLbTab('most_active')">Most Active</button>
+    <button class="sub-tab" data-lb="hall_of_shame" onclick="switchLbTab('hall_of_shame')">Hall of Shame</button>
+  </div>
+
+  <!-- Time filters + Search -->
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+    <div class="pill-group">
+      <button class="pill active" data-period="24h" onclick="switchLbPeriod('24h')">24H</button>
+      <button class="pill" data-period="7d" onclick="switchLbPeriod('7d')">7D</button>
+      <button class="pill" data-period="30d" onclick="switchLbPeriod('30d')">30D</button>
+      <button class="pill" data-period="all" onclick="switchLbPeriod('all')">All</button>
+    </div>
+    <div class="search-box" style="margin-bottom:0;max-width:400px;">
+      <input type="text" id="lb-search" placeholder="Find your rank (wallet address)..." />
+      <button onclick="findRank()">Find</button>
+    </div>
+  </div>
+
+  <!-- Leaderboard Table -->
+  <div class="card" style="margin-top:16px;">
+    <div style="max-height:600px;overflow-y:auto;" id="lb-scroll-container">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:50px">Rank</th>
+            <th>Wallet</th>
+            <th>PnL</th>
+            <th>Win Rate</th>
+            <th>Volume</th>
+            <th>Trades</th>
+          </tr>
+        </thead>
+        <tbody id="lb-table">
+          <tr><td colspan="6" style="color:var(--muted)">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 3: ANALYTICS
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-analytics" class="tab-content">
+<div style="padding:24px;">
+  <h2 style="font-size:18px;margin-bottom:12px;">Exchange Analytics</h2>
+  <div class="data-disclaimer">&#x1F4E1; Market data sourced from Bulk Exchange API. Prices, volumes, and open interest reflect real exchange data.</div>
+
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="label">Total Trades</div>
+      <div class="big" id="an-total-trades">--</div>
+      <div class="detail" id="an-trades-24h">-- in last 24h</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Total Volume</div>
+      <div class="big" id="an-total-volume">--</div>
+      <div class="detail" id="an-volume-24h">-- in last 24h</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Open Interest</div>
+      <div class="big" id="an-oi">--</div>
+      <div class="detail">Current positions value</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Unique Traders</div>
+      <div class="big" id="an-unique-traders">--</div>
+      <div class="detail" id="an-traders-24h">-- active in 24h</div>
+    </div>
+  </div>
+
+  <!-- Top Symbols -->
+  <div class="card" style="margin-bottom:24px;">
+    <h2>Top Markets by Volume</h2>
+    <table>
+      <thead><tr><th>Symbol</th><th>Volume</th><th>Trades</th><th>Unique Traders</th></tr></thead>
+      <tbody id="an-symbols-table"><tr><td colspan="4" style="color:var(--muted)">Loading...</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Chart placeholders -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div class="card">
+      <h2>Volume Over Time</h2>
+      <div class="chart-placeholder">Chart coming soon - Volume trend data</div>
+    </div>
+    <div class="card">
+      <h2>Trade Count Over Time</h2>
+      <div class="chart-placeholder">Chart coming soon - Trade frequency data</div>
+    </div>
+    <div class="card">
+      <h2>PnL Distribution</h2>
+      <div class="chart-placeholder">Chart coming soon - PnL histogram</div>
+    </div>
+    <div class="card">
+      <h2>Open Interest Over Time</h2>
+      <div class="chart-placeholder">Chart coming soon - OI trend data</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 4: WHALE TRACKER
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="tab-whales" class="tab-content">
+<div style="padding:24px;">
+  <h2 style="font-size:18px;margin-bottom:12px;">Whale Tracker</h2>
+  <div class="data-disclaimer" style="border-left-color:var(--purple);">&#x26A0;&#xFE0F; Simulated data &mdash; Bulk API does not expose per-wallet trading data publicly. Wallet addresses, balances, and trade histories shown here are generated for demonstration purposes.</div>
+  <p style="color:var(--muted);font-size:13px;margin-bottom:20px;">Monitoring wallets with balance &gt; $50,000 or single trade &gt; $10,000</p>
+
+  <div style="display:grid;grid-template-columns:2fr 1fr;gap:24px;">
+    <!-- Whale Table -->
+    <div class="card">
+      <h2>Whale Wallets</h2>
+      <div style="max-height:600px;overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Wallet</th>
+              <th>Balance</th>
+              <th>Largest Trade</th>
+              <th>Total Volume</th>
+              <th>PnL</th>
+              <th>Last Active</th>
+            </tr>
+          </thead>
+          <tbody id="whale-table">
+            <tr><td colspan="6" style="color:var(--muted)">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Whale Alert Feed -->
+    <div class="card">
+      <h2>Whale Alert Feed</h2>
+      <div id="whale-feed" style="max-height:550px;overflow-y:auto;">
+        <div class="feed-item" style="color:var(--muted)">Monitoring for whale activity...</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
 
 <script>
 const API = window.location.origin;
 const WS_URL = `ws://${window.location.host}/ws`;
+
+// ── State ──────────────────────────────────────────────────
+let currentTab = 'dashboard';
+let lbTab = 'top_traders';
+let lbPeriod = '24h';
+let lbData = [];
 
 // ── Helpers ─────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
 function tag(text, cls) { return `<span class="tag tag-${cls}">${text}</span>`; }
 function fmtTime(iso) {
   if (!iso) return '--';
-  const d = new Date(iso + 'Z');
+  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function fmtDate(iso) {
+  if (!iso) return '--';
+  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 function fmtPnl(val) {
   if (val == null) return '--';
   const cls = val >= 0 ? 'color:var(--green)' : 'color:var(--red)';
   return `<span style="${cls}">$${val.toFixed(2)}</span>`;
+}
+function fmtUSD(val) {
+  if (val == null || val === undefined) return '--';
+  if (Math.abs(val) >= 1e6) return '$' + (val / 1e6).toFixed(2) + 'M';
+  if (Math.abs(val) >= 1e3) return '$' + (val / 1e3).toFixed(1) + 'K';
+  return '$' + Number(val).toLocaleString(undefined, {maximumFractionDigits: 0});
+}
+function shortWallet(w) { return w ? w.slice(0,4) + '...' + w.slice(-4) : '--'; }
+function walletLink(w) {
+  return `<span style="font-family:monospace;font-size:11px;display:inline-flex;align-items:center;gap:4px;"><a href="#" onclick="loadWallet('${w}');switchTab('dashboard');return false;" style="color:var(--accent);text-decoration:none;" title="${w}">${shortWallet(w)}</a><button class="copy-btn" onclick="copyWallet('${w}',this);event.stopPropagation();" title="Copy address"><span class="tooltip">Copied!</span>&#x2398;</button></span>`;
+}
+
+function copyWallet(addr, btn) {
+  navigator.clipboard.writeText(addr).then(() => {
+    btn.classList.add('copied');
+    setTimeout(() => btn.classList.remove('copied'), 1200);
+  });
+}
+
+// ── Tab Switching ───────────────────────────────────────────
+function switchTab(tabName) {
+  currentTab = tabName;
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + tabName));
+  if (tabName === 'leaderboard') loadLeaderboard();
+  if (tabName === 'analytics') loadAnalytics();
+  if (tabName === 'whales') loadWhales();
 }
 
 // ── Fetch data ──────────────────────────────────────────────
@@ -178,6 +598,7 @@ async function fetchJSON(path) {
   } catch { return null; }
 }
 
+// ── Dashboard Refresh ───────────────────────────────────────
 async function refresh() {
   // Status
   const st = await fetchJSON('/api/status');
@@ -243,6 +664,35 @@ async function refresh() {
     itb.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">No issues</td></tr>';
   }
 
+  // Traders leaderboard (mini)
+  const traders = await fetchJSON('/api/traders?hours=24&limit=50');
+  if (traders) {
+    $('profitable-count').textContent = `${traders.profitable_count} winners`;
+    $('losers-count').textContent = `${traders.losers_count} losers`;
+
+    const ptb = $('profitable-table');
+    if (traders.profitable && traders.profitable.length) {
+      ptb.innerHTML = traders.profitable.map((t, i) => `<tr>
+        <td style="color:var(--muted)">${i+1}</td>
+        <td>${walletLink(t.wallet)}</td>
+        <td style="color:var(--green);font-weight:600">+$${Number(t.total_pnl).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+        <td style="color:var(--green)">${t.avg_pnl_pct}%</td>
+        <td>${t.total_trades}</td>
+      </tr>`).join('');
+    }
+
+    const ltb2 = $('losers-table');
+    if (traders.losers && traders.losers.length) {
+      ltb2.innerHTML = traders.losers.map((t, i) => `<tr>
+        <td style="color:var(--muted)">${i+1}</td>
+        <td>${walletLink(t.wallet)}</td>
+        <td style="color:var(--red);font-weight:600">-$${Math.abs(Number(t.total_pnl)).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+        <td style="color:var(--red)">${t.avg_pnl_pct}%</td>
+        <td>${t.total_trades}</td>
+      </tr>`).join('');
+    }
+  }
+
   // Latency
   const lat = await fetchJSON('/api/latency?minutes=60');
   const ltb = $('latency-table');
@@ -253,6 +703,136 @@ async function refresh() {
     </tr>`).join('');
   } else {
     ltb.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No data</td></tr>';
+  }
+}
+
+// ── Leaderboard ─────────────────────────────────────────────
+function switchLbTab(tab) {
+  lbTab = tab;
+  document.querySelectorAll('.sub-tab').forEach(t => t.classList.toggle('active', t.dataset.lb === tab));
+  loadLeaderboard();
+}
+function switchLbPeriod(period) {
+  lbPeriod = period;
+  document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.period === period));
+  loadLeaderboard();
+}
+
+async function loadLeaderboard() {
+  const data = await fetchJSON(`/api/leaderboard?tab=${lbTab}&period=${lbPeriod}&limit=100`);
+  lbData = data || [];
+  const tb = $('lb-table');
+  if (lbData.length) {
+    tb.innerHTML = lbData.map(t => `<tr data-wallet="${t.wallet}">
+      <td style="font-weight:700;color:${t.rank <= 3 ? 'var(--yellow)' : 'var(--muted)'}">${t.rank <= 3 ? ['','&#x1F947;','&#x1F948;','&#x1F949;'][t.rank] : '#' + t.rank}</td>
+      <td>${walletLink(t.wallet)}</td>
+      <td style="color:${(t.total_pnl||0)>=0?'var(--green)':'var(--red)'};font-weight:600">${(t.total_pnl||0)>=0?'+':''}$${Math.abs(Number(t.total_pnl)).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+      <td>${t.win_rate}%</td>
+      <td>${fmtUSD(t.total_volume)}</td>
+      <td>${t.total_trades}</td>
+    </tr>`).join('');
+  } else {
+    tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No data for this filter</td></tr>';
+  }
+}
+
+function findRank() {
+  const q = $('lb-search').value.trim().toLowerCase();
+  if (!q || q.length < 3) return;
+  // Remove previous highlights
+  document.querySelectorAll('#lb-table tr.highlighted').forEach(r => r.classList.remove('highlighted'));
+  const rows = document.querySelectorAll('#lb-table tr[data-wallet]');
+  let found = false;
+  rows.forEach(row => {
+    const wallet = row.dataset.wallet.toLowerCase();
+    if (wallet.includes(q)) {
+      row.classList.add('highlighted');
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      found = true;
+    }
+  });
+  if (!found) {
+    // Try searching server-side
+    doLeaderboardSearch(q);
+  }
+}
+
+async function doLeaderboardSearch(q) {
+  const data = await fetchJSON(`/api/explorer/search?q=${encodeURIComponent(q)}`);
+  if (data && data.results && data.results.length > 0) {
+    const wallet = data.results[0].wallet;
+    // Look through current data
+    const idx = lbData.findIndex(d => d.wallet === wallet);
+    if (idx >= 0) {
+      const row = document.querySelector(`#lb-table tr[data-wallet="${wallet}"]`);
+      if (row) {
+        row.classList.add('highlighted');
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } else {
+      // Load wallet profile instead
+      switchTab('dashboard');
+      loadWallet(wallet);
+    }
+  }
+}
+
+// ── Analytics ───────────────────────────────────────────────
+async function loadAnalytics() {
+  const data = await fetchJSON('/api/analytics');
+  if (!data) return;
+
+  $('an-total-trades').textContent = Number(data.total_trades).toLocaleString();
+  $('an-trades-24h').textContent = Number(data.trades_24h).toLocaleString() + ' in last 24h';
+  $('an-total-volume').textContent = fmtUSD(data.total_volume);
+  $('an-volume-24h').textContent = fmtUSD(data.volume_24h) + ' in last 24h';
+  $('an-oi').textContent = fmtUSD(data.open_interest);
+  $('an-unique-traders').textContent = Number(data.unique_traders).toLocaleString();
+  $('an-traders-24h').textContent = Number(data.traders_24h).toLocaleString() + ' active in 24h';
+
+  const stb = $('an-symbols-table');
+  if (data.top_symbols && data.top_symbols.length) {
+    stb.innerHTML = data.top_symbols.map(s => `<tr>
+      <td style="font-weight:600">${s.symbol}</td>
+      <td>${fmtUSD(s.vol)}</td>
+      <td>${Number(s.trades).toLocaleString()}</td>
+      <td>${s.traders}</td>
+    </tr>`).join('');
+  }
+}
+
+// ── Whale Tracker ───────────────────────────────────────────
+async function loadWhales() {
+  const data = await fetchJSON('/api/whales?min_balance=50000');
+  if (!data) return;
+
+  const tb = $('whale-table');
+  if (data.length) {
+    tb.innerHTML = data.map(w => `<tr>
+      <td>${walletLink(w.wallet)}</td>
+      <td style="font-weight:600">${fmtUSD(w.balance_usd)}</td>
+      <td>${fmtUSD(w.largest_trade)}</td>
+      <td>${fmtUSD(w.total_volume)}</td>
+      <td style="color:${(w.total_pnl||0)>=0?'var(--green)':'var(--red)'};font-weight:600">${(w.total_pnl||0)>=0?'+':''}${fmtUSD(Math.abs(w.total_pnl||0))}</td>
+      <td>${fmtDate(w.last_active)}</td>
+    </tr>`).join('');
+
+    // Populate whale alert feed
+    const feed = $('whale-feed');
+    const alerts = data.slice(0, 15).map(w => {
+      const action = (w.total_pnl || 0) > 0 ? 'profited' : 'lost';
+      const color = (w.total_pnl || 0) > 0 ? 'var(--green)' : 'var(--red)';
+      return `<div class="whale-alert">
+        <span class="whale-icon">&#x1F433;</span>
+        <span class="alert-time">${fmtDate(w.last_active)}</span>
+        <span>Whale <span style="font-family:monospace;color:var(--accent)">${shortWallet(w.wallet)}</span>
+        ${action} <span style="color:${color};font-weight:600">${fmtUSD(Math.abs(w.total_pnl||0))}</span>
+        | Balance: <span style="font-weight:600">${fmtUSD(w.balance_usd)}</span></span>
+      </div>`;
+    });
+    feed.innerHTML = alerts.join('');
+  } else {
+    tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No whale wallets found</td></tr>';
   }
 }
 
@@ -278,17 +858,102 @@ function connectWS() {
     item.className = `feed-item${data.type === 'alert' ? ' alert' : ''}`;
     item.innerHTML = `<span class="ts">${fmtTime(data.ts)}</span>  ${data.content.replace(/\n/g, '<br>')}`;
     feed.prepend(item);
-    // Keep feed manageable
     while (feed.children.length > 100) feed.removeChild(feed.lastChild);
-    // Refresh data on new messages
     refresh();
   };
+}
+
+// ── Explorer ─────────────────────────────────────────────────
+$('explorer-search').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+$('lb-search').addEventListener('keydown', e => { if (e.key === 'Enter') findRank(); });
+
+async function doSearch() {
+  const q = $('explorer-search').value.trim();
+  if (q.length < 3) return;
+  const data = await fetchJSON(`/api/explorer/search?q=${encodeURIComponent(q)}`);
+  const sr = $('search-results');
+  const tb = $('search-results-table');
+  if (data && data.results && data.results.length) {
+    sr.style.display = 'block';
+    tb.innerHTML = data.results.map(r => `<tr>
+      <td>${walletLink(r.wallet)}</td>
+      <td style="color:${r.total_pnl>=0?'var(--green)':'var(--red)'};font-weight:600">$${Number(r.total_pnl).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+      <td>$${Number(r.total_volume).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+      <td>${r.total_trades}</td>
+      <td><button onclick="loadWallet('${r.wallet}')" style="padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;">View</button></td>
+    </tr>`).join('');
+  } else {
+    sr.style.display = 'block';
+    tb.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No wallets found</td></tr>';
+  }
+}
+
+async function loadWallet(wallet) {
+  $('search-results').style.display = 'none';
+  $('explorer-search').value = wallet;
+  const data = await fetchJSON(`/api/explorer/wallet?wallet=${encodeURIComponent(wallet)}`);
+  if (!data || !data.stats) return;
+  const wp = $('wallet-profile');
+  wp.style.display = 'block';
+
+  const s = data.stats;
+  const b = data.balance || {};
+  const totalSessions = (s.winning_sessions || 0) + (s.losing_sessions || 0);
+  const winRate = totalSessions > 0 ? ((s.winning_sessions || 0) / totalSessions * 100).toFixed(1) : '0';
+
+  $('wp-balance').textContent = b.balance_usd ? `$${Number(b.balance_usd).toLocaleString(undefined,{maximumFractionDigits:2})}` : '--';
+  $('wp-equity').textContent = b.equity_usd ? `$${Number(b.equity_usd).toLocaleString(undefined,{maximumFractionDigits:2})}` : '--';
+
+  const pnl = s.total_pnl || 0;
+  $('wp-pnl').textContent = `${pnl >= 0 ? '+' : ''}$${Number(pnl).toLocaleString(undefined,{maximumFractionDigits:2})}`;
+  $('wp-pnl').style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+  $('wp-winrate').textContent = `${winRate}%`;
+  $('wp-winrate').style.color = parseFloat(winRate) >= 50 ? 'var(--green)' : 'var(--red)';
+  $('wp-trades').textContent = s.total_trades || 0;
+
+  $('wp-best').textContent = s.best_trade ? `+$${Number(s.best_trade).toLocaleString(undefined,{maximumFractionDigits:2})}` : '--';
+  $('wp-worst').textContent = s.worst_trade ? `-$${Math.abs(Number(s.worst_trade)).toLocaleString(undefined,{maximumFractionDigits:2})}` : '--';
+
+  const ur = b.unrealized_pnl || 0;
+  $('wp-unrealized').textContent = `${ur >= 0 ? '+' : ''}$${Number(ur).toLocaleString(undefined,{maximumFractionDigits:2})}`;
+  $('wp-unrealized').style.color = ur >= 0 ? 'var(--green)' : 'var(--red)';
+
+  // Open positions
+  const otb = $('wp-open-table');
+  if (data.open_trades && data.open_trades.length) {
+    otb.innerHTML = data.open_trades.map(t => `<tr>
+      <td>${t.symbol}</td>
+      <td>${tag(t.side, t.side.toLowerCase())}</td>
+      <td>$${t.entry_price}</td>
+      <td>${t.size}</td>
+      <td>${fmtTime(t.ts)}</td>
+    </tr>`).join('');
+  } else {
+    otb.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No open positions</td></tr>';
+  }
+
+  // Trade history
+  const htb = $('wp-history-table');
+  if (data.history && data.history.length) {
+    htb.innerHTML = data.history.map(t => `<tr>
+      <td>${fmtTime(t.ts)}</td>
+      <td>${t.symbol}</td>
+      <td>${tag(t.side, t.side.toLowerCase())}</td>
+      <td>$${t.entry_price}</td>
+      <td>${t.exit_price ? '$'+t.exit_price : '--'}</td>
+      <td>${fmtPnl(t.pnl_usd)}</td>
+      <td>${tag(t.status, t.status.toLowerCase())}</td>
+    </tr>`).join('');
+  } else {
+    htb.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">No trade history</td></tr>';
+  }
 }
 
 // ── Init ────────────────────────────────────────────────────
 refresh();
 connectWS();
-setInterval(refresh, 30000); // refresh every 30s
+setInterval(refresh, 30000);
 </script>
 </body>
 </html>

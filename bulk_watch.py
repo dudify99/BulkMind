@@ -32,10 +32,10 @@ class BulkWatch:
     # ── Core Endpoints to Monitor ─────────────────────────────
 
     ENDPOINTS = {
-        "orderbook":   "/orderbook/BTC-USD",
+        "orderbook":   "/l2book?type=l2book&coin=BTC-USD",
         "ticker":      "/ticker/BTC-USD",
-        "funding":     "/funding-rates",
-        "trades":      "/trades/BTC-USD",
+        "stats":       "/stats?period=1d",
+        "exchangeInfo": "/exchangeInfo",
         "order_place": "/order",          # POST — stress tested separately
     }
 
@@ -122,13 +122,16 @@ class BulkWatch:
     # ── Funding Rate Monitor ──────────────────────────────────
 
     async def check_funding_rates(self, session: aiohttp.ClientSession):
-        result = await self.probe_endpoint(session, "funding", "/funding-rates")
+        """Fetch funding rates from GET /stats which includes per-market funding data"""
+        result = await self.probe_endpoint(session, "stats", "/stats?period=1d")
         if result.get("body"):
             data = result["body"]
+            funding = data.get("funding", {}).get("rates", {})
+            markets = data.get("markets", [])
             conn = get_conn()
-            for item in (data if isinstance(data, list) else data.get("data", [])):
-                symbol = item.get("symbol", "")
-                rate   = float(item.get("fundingRate", 0))
+            for market in markets:
+                symbol = market.get("symbol", "")
+                rate = float(market.get("fundingRate", 0))
                 conn.execute(
                     "INSERT INTO funding_rates (ts, symbol, rate) VALUES (?,?,?)",
                     (datetime.utcnow().isoformat(), symbol, rate)
@@ -145,14 +148,19 @@ class BulkWatch:
 
     async def stress_test_orderbook(self, session: aiohttp.ClientSession,
                                     symbol: str = "BTC-USD"):
-        """Check bid-ask spread and depth — flag if abnormal"""
-        result = await self.probe_endpoint(session, "orderbook", f"/orderbook/{symbol}")
+        """Check bid-ask spread and depth via GET /l2book — flag if abnormal"""
+        result = await self.probe_endpoint(
+            session, "orderbook",
+            f"/l2book?type=l2book&coin={symbol}&nlevels=10"
+        )
         if not result.get("body"):
             return
 
         book = result["body"]
-        bids = book.get("bids", [])
-        asks = book.get("asks", [])
+        # /l2book returns levels as [bids, asks] array
+        levels = book.get("levels", [[], []])
+        bids = levels[0] if len(levels) > 0 else []
+        asks = levels[1] if len(levels) > 1 else []
 
         if not bids or not asks:
             log_issue("HIGH", "LIQUIDITY",
@@ -160,8 +168,10 @@ class BulkWatch:
                       "No bids or asks returned")
             return
 
-        best_bid = float(bids[0][0])
-        best_ask = float(asks[0][0])
+        best_bid = float(bids[0].get("px", 0))
+        best_ask = float(asks[0].get("px", 0))
+        if best_bid == 0 or best_ask == 0:
+            return
         spread_bps = (best_ask - best_bid) / best_bid * 10000
 
         if spread_bps > 10:  # > 10bps spread is a flag
@@ -170,8 +180,8 @@ class BulkWatch:
                       f"Bid: {best_bid} | Ask: {best_ask}")
 
         # Depth check — total depth in top 5 levels
-        bid_depth = sum(float(b[1]) for b in bids[:5])
-        ask_depth = sum(float(a[1]) for a in asks[:5])
+        bid_depth = sum(float(b.get("sz", 0)) for b in bids[:5])
+        ask_depth = sum(float(a.get("sz", 0)) for a in asks[:5])
 
         if bid_depth < 1.0 or ask_depth < 1.0:  # < 1 BTC depth = thin
             log_issue("HIGH", "LIQUIDITY",

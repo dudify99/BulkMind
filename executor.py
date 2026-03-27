@@ -69,17 +69,27 @@ class BulkClient:
             return None
 
     # ── Market Data ──────────────────────────────────────────
+    # Endpoints per docs.bulk.trade OpenAPI spec
 
     async def get_candles(self, symbol: str, interval: str = "15m",
-                          limit: int = 100) -> List[dict]:
-        """Fetch OHLCV candles"""
-        data = await self.get(f"/candles/{symbol}",
-                              params={"interval": interval, "limit": limit})
+                          limit: int = None, start_time: int = None,
+                          end_time: int = None) -> List[dict]:
+        """Fetch OHLCV candles via GET /klines.
+        Note: limit param kept for backward compat but /klines doesn't support it.
+        Use startTime/endTime to control range."""
+        params = {"symbol": symbol, "interval": interval}
+        if start_time:
+            params["startTime"] = start_time
+        if end_time:
+            params["endTime"] = end_time
+
+        data = await self.get("/klines", params=params)
         if not data:
             return []
 
+        raw = data if isinstance(data, list) else data.get("data", [])
         candles = []
-        for c in (data if isinstance(data, list) else data.get("data", [])):
+        for c in raw:
             candles.append({
                 "ts":     c.get("t") or c.get("timestamp"),
                 "open":   float(c.get("o") or c.get("open", 0)),
@@ -91,17 +101,72 @@ class BulkClient:
         return candles
 
     async def get_ticker(self, symbol: str) -> Optional[dict]:
+        """GET /ticker/{symbol} — price, volume, OI, funding, mark/oracle"""
         return await self.get(f"/ticker/{symbol}")
 
-    async def get_orderbook(self, symbol: str) -> Optional[dict]:
-        return await self.get(f"/orderbook/{symbol}")
+    async def get_orderbook(self, symbol: str, nlevels: int = 20,
+                            aggregation: float = None) -> Optional[dict]:
+        """GET /l2book — order book snapshot"""
+        params = {"type": "l2book", "coin": symbol}
+        if nlevels:
+            params["nlevels"] = nlevels
+        if aggregation:
+            params["aggregation"] = aggregation
+        return await self.get("/l2book", params=params)
 
-    async def get_funding_rates(self) -> Optional[dict]:
-        return await self.get("/funding-rates")
+    async def get_exchange_info(self) -> Optional[dict]:
+        """GET /exchangeInfo — all instruments and their specs"""
+        return await self.get("/exchangeInfo")
 
-    async def get_trades(self, symbol: str, limit: int = 50) -> List[dict]:
-        data = await self.get(f"/trades/{symbol}", params={"limit": limit})
-        return data if isinstance(data, list) else (data or {}).get("data", [])
+    async def get_stats(self, period: str = "1d",
+                        symbol: str = None) -> Optional[dict]:
+        """GET /stats — exchange-wide volume, OI, funding rates"""
+        params = {"period": period}
+        if symbol:
+            params["symbol"] = symbol
+        return await self.get("/stats", params=params)
+
+    # ── Account Data (unsigned, public) ────────────────────
+
+    async def get_account(self, user_pubkey: str,
+                          query_type: str = "fullAccount") -> Optional[dict]:
+        """POST /account — query any wallet's positions, orders, fills, PnL.
+        No signature required. query_type: fullAccount|openOrders|fills|positions|fundingHistory|orderHistory"""
+        data = await self.post("/account", {
+            "type": query_type,
+            "user": user_pubkey,
+        })
+        return data
+
+    async def get_fills(self, user_pubkey: str) -> List[dict]:
+        """Get recent fills for a wallet"""
+        data = await self.get_account(user_pubkey, "fills")
+        if not data or not isinstance(data, list):
+            return []
+        results = []
+        for item in data:
+            if "fills" in item:
+                fills = item["fills"]
+                if isinstance(fills, list):
+                    results.extend(fills)
+                else:
+                    results.append(fills)
+        return results
+
+    async def get_positions(self, user_pubkey: str) -> List[dict]:
+        """Get closed positions for a wallet"""
+        data = await self.get_account(user_pubkey, "positions")
+        if not data or not isinstance(data, list):
+            return []
+        results = []
+        for item in data:
+            if "positions" in item:
+                pos = item["positions"]
+                if isinstance(pos, list):
+                    results.extend(pos)
+                else:
+                    results.append(pos)
+        return results
 
 
 class BulkExecutor:
