@@ -13,15 +13,17 @@ from bulk_stream import BulkStream
 from bulk_profile import BulkProfile
 from bulk_sol import BulkSOL
 from breakout_bot import BreakoutBot
+from news_trader import NewsTrader
 from dashboard import Dashboard
 from evoskill_integration import run_evoskill_loop
-from config import BREAKOUT_PAPER_MODE, DASHBOARD_PORT
+from config import BREAKOUT_PAPER_MODE, NEWS_PAPER_MODE, DASHBOARD_PORT
 
 
 async def main():
     print("=" * 50)
     print("  🧠 BulkMind Starting")
-    print(f"  Mode: {'PAPER' if BREAKOUT_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  BreakoutBot: {'PAPER' if BREAKOUT_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  NewsTrader:  {'PAPER' if NEWS_PAPER_MODE else '🔴 LIVE'}")
     print(f"  Dashboard: http://localhost:{DASHBOARD_PORT}")
     print("=" * 50)
 
@@ -39,9 +41,11 @@ async def main():
     dashboard = Dashboard(reporter, bulksol)
 
     async with aiohttp.ClientSession() as session:
-        client   = BulkClient(session)
-        executor = BulkExecutor(client, paper=BREAKOUT_PAPER_MODE)
-        bot      = BreakoutBot(executor, client, reporter)
+        client        = BulkClient(session)
+        executor      = BulkExecutor(client, paper=BREAKOUT_PAPER_MODE)
+        bot           = BreakoutBot(executor, client, reporter)
+        news_executor = BulkExecutor(client, paper=NEWS_PAPER_MODE)
+        news_trader   = NewsTrader(news_executor, client, reporter, session)
 
         await reporter.send(
             "🟢 *BulkMind Online*\n"
@@ -50,19 +54,21 @@ async def main():
             f"BulkProfile: ✅\n"
             f"BulkSOL: ✅\n"
             f"BreakoutBot: ✅\n"
+            f"NewsTrader: ✅\n"
             f"Dashboard: ✅\n"
             f"Mode: `{'PAPER' if BREAKOUT_PAPER_MODE else 'LIVE'}`"
         )
 
         # Run all loops concurrently
         await asyncio.gather(
-            dashboard.run(),      # Web dashboard + API
-            watch.run(),          # BulkWatch: exchange health
-            stream.run(),         # BulkStream: live trade feed
-            profile.run(),        # BulkProfile: wallet discovery
-            bulksol.run(),        # BulkSOL: staking analytics
-            bot.run(),            # BreakoutBot: trading agent
-            evoskill_schedule(),  # Periodic EvoSkill improvement
+            dashboard.run(),        # Web dashboard + API
+            watch.run(),            # BulkWatch: exchange health
+            stream.run(),           # BulkStream: live trade feed
+            profile.run(),          # BulkProfile: wallet discovery
+            bulksol.run(),          # BulkSOL: staking analytics
+            bot.run(),              # BreakoutBot: TA trading agent
+            news_trader.run(),      # NewsTrader: LLM news agent
+            evoskill_schedule(),    # Periodic EvoSkill improvement
         )
 
 

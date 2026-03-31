@@ -56,6 +56,19 @@ WALLET_REFRESH_HOURS         = 6       # re-profile wallet after N hours
 LIQUIDATION_ALERT_THRESHOLD_USD = 10000  # alert if liquidation above this
 WATCHED_SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD"]
 
+# ── NewsTrader Settings ───────────────────────────────────────
+NEWS_SYMBOLS            = ["BTC-USD", "ETH-USD", "SOL-USD"]
+NEWS_POLL_INTERVAL_SEC  = 60           # check news sources every 60s
+NEWS_MIN_IMPACT_SCORE   = 7            # only trade impact score >= 7/10
+NEWS_ATR_MULT           = 1.5          # wider SL for news volatility (1.5x ATR)
+NEWS_TP_RATIO           = 2.0          # TP = 2x risk (1:2 RR)
+NEWS_MAX_POSITION_USD   = 100          # max position size (paper mode)
+NEWS_MAX_HOLD_MIN       = 30           # force-close news trade after 30 min
+NEWS_MAX_AGE_MIN        = 30           # ignore articles older than 30 min
+NEWS_PAPER_MODE         = True         # paper trading default
+NEWS_LLM_MODEL          = "claude-haiku-4-5-20251001"  # fast + cheap for news analysis
+CRYPTOPANIC_API_KEY     = os.getenv("CRYPTOPANIC_API_KEY", "")  # optional, free tier works without
+
 # ── BulkSOL Analytics ────────────────────────────────────────
 BULKSOL_LIVE_CHECK_SEC   = 300        # 5 min — fetch live stats for dashboard
 BULKSOL_SNAPSHOT_SEC     = 6 * 3600   # 6 hours — persist snapshot to DB for charts

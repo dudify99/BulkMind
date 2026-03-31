@@ -118,6 +118,69 @@ Respond with: YES or NO, followed by one line of reasoning.
 
 # ── EvoSkill Runner ───────────────────────────────────────────
 
+def news_trader_scorer(question: str, predicted: str, ground_truth: str) -> float:
+    """Score NewsTrader trade decision against actual outcome."""
+    pred = predicted.strip().upper()
+    gt   = ground_truth.strip().upper()
+    return 1.0 if pred == gt else 0.0
+
+
+NEWS_TRADER_SYSTEM_PROMPT = """
+You are NewsTrader, an LLM-powered news trading agent for Bulk perpetuals exchange.
+
+Your job: Given a crypto news article and market context, decide YES (trade it)
+or NO (skip it).
+
+Analyze:
+1. News sentiment and direction (bullish or bearish catalyst)
+2. Impact magnitude (how market-moving is this event?)
+3. Asset relevance (is the affected asset in our symbol list?)
+4. Timing (is this breaking news or already priced in?)
+5. Risk factors (fake news, thin liquidity, countertrend?)
+
+Respond with: YES or NO, followed by one line of reasoning.
+"""
+
+INITIAL_NEWS_SKILLS = {
+    "impact_filter": """
+# Impact Filter Skill
+When evaluating a news trade signal:
+- Only trade events with clear, immediate market impact
+- Avoid trading routine partnership announcements, product updates, or ecosystem grants
+- High-impact events: exchange hacks, regulatory bans, ETF approvals, large liquidations
+- Very high-impact: exchange insolvency, blanket crypto bans, major protocol exploits
+""",
+
+    "freshness_filter": """
+# Freshness Filter Skill
+Avoid news that is already priced in:
+- If the article was published > 15 minutes ago, the market has likely reacted
+- If the same news appeared on multiple sources > 5 min apart, skip
+- Only trade first-mover articles from primary sources (CoinDesk, CoinTelegraph, TheBlock)
+- Breaking news from CryptoPanic hot filter is usually fresh enough
+""",
+
+    "direction_clarity": """
+# Direction Clarity Skill
+Only trade when the directional impact is unambiguous:
+- BULLISH signals: ETF approval, institutional buy announcement, protocol upgrade, exchange listing
+- BEARISH signals: hack/exploit, regulatory ban, exchange insolvency, major sell-off news
+- SKIP when: news is mixed (e.g. regulation with positive and negative aspects), vague ("crypto rally possible")
+- When in doubt, skip — there will be a clearer signal next time
+""",
+}
+
+
+def write_news_trader_skills(skills_dir: str = ".claude/skills"):
+    """Write initial NewsTrader skill files for EvoSkill to iterate on."""
+    Path(skills_dir).mkdir(parents=True, exist_ok=True)
+    for name, content in INITIAL_NEWS_SKILLS.items():
+        path = Path(skills_dir) / f"news_{name}.md"
+        if not path.exists():
+            path.write_text(content)
+            print(f"📝 Wrote news skill: news_{name}.md")
+
+
 async def run_evoskill_loop(failures_path: str = "data/failures.json"):
     """
     Run EvoSkill self-improvement loop using BreakoutBot failure trajectories
@@ -138,6 +201,7 @@ async def run_evoskill_loop(failures_path: str = "data/failures.json"):
 
     # Write initial skills if not present
     write_initial_skills()
+    write_news_trader_skills()
 
     try:
         # Import EvoSkill (must be installed separately)

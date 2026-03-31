@@ -218,6 +218,25 @@ def init_db():
         )
     """)
 
+    # ── NewsTrader Tables ─────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS news_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            article_id  TEXT NOT NULL,
+            title       TEXT NOT NULL,
+            sentiment   TEXT,          -- BUY / SELL / NEUTRAL
+            impact      INTEGER,       -- 1-10
+            symbols     TEXT,          -- JSON list e.g. ["BTC-USD"]
+            traded      INTEGER DEFAULT 0,
+            trade_id    INTEGER,
+            UNIQUE(source, article_id)
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_news_events_ts ON news_events(ts)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_news_events_traded ON news_events(traded)")
+
     # ── Indexes ──────────────────────────────────────────────
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_ts ON observed_trades(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_maker ON observed_trades(maker)")
@@ -816,6 +835,54 @@ def cleanup_old_observed_trades(days: int = 7):
     conn.execute(
         "DELETE FROM observed_trades WHERE ts < datetime('now', ?)",
         (f"-{days} days",)
+    )
+    conn.commit()
+    conn.close()
+
+
+# ── NewsTrader Helpers ────────────────────────────────────────
+
+def save_news_event(source: str, article_id: str, title: str,
+                    sentiment: str = None, impact: int = None,
+                    symbols: list = None) -> int:
+    """Insert a news event; return its row id. Silently skips duplicates."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO news_events
+               (ts, source, article_id, title, sentiment, impact, symbols)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                datetime.utcnow().isoformat(),
+                source, article_id, title,
+                sentiment, impact,
+                json.dumps(symbols or []),
+            )
+        )
+        conn.commit()
+        row_id = cur.lastrowid or 0
+    finally:
+        conn.close()
+    return row_id
+
+
+def is_news_seen(source: str, article_id: str) -> bool:
+    """Return True if this article has already been saved."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id FROM news_events WHERE source=? AND article_id=?",
+        (source, article_id)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def mark_news_traded(event_id: int, trade_id: int):
+    """Mark a news event as traded and record the trade_id."""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE news_events SET traded=1, trade_id=? WHERE id=?",
+        (trade_id, event_id)
     )
     conn.commit()
     conn.close()
