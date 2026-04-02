@@ -10,9 +10,11 @@ from typing import Optional
 # ── API Endpoints ──────────────────────────────────────────────
 BULK_API_BASE = "https://exchange-api.bulk.trade/api/v1"
 BULK_WS_URL   = "wss://exchange-ws1.bulk.trade"
+HL_API_BASE   = "https://api.hyperliquid.xyz"
 
 # ── Credentials (set via env vars, never hardcode) ─────────────
 BULK_PRIVATE_KEY   = os.getenv("BULK_PRIVATE_KEY", "")
+HL_PRIVATE_KEY     = os.getenv("HL_PRIVATE_KEY", "")       # Hyperliquid (EVM key)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
@@ -57,6 +59,7 @@ LIQUIDATION_ALERT_THRESHOLD_USD = 10000  # alert if liquidation above this
 WATCHED_SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD"]
 
 # ── NewsTrader Settings ───────────────────────────────────────
+NEWS_EXCHANGES          = ["bulk", "hyperliquid"]  # trade on both exchanges
 NEWS_SYMBOLS            = ["BTC-USD", "ETH-USD", "SOL-USD"]
 NEWS_POLL_INTERVAL_SEC  = 60           # check news sources every 60s
 NEWS_MIN_IMPACT_SCORE   = 7            # only trade impact score >= 7/10
@@ -89,3 +92,21 @@ SYMBOL_CONFIGS = {
     "ETH-USD": SymbolConfig("ETH-USD", min_size=0.01,  tick_size=0.01, max_leverage=20),
     "SOL-USD": SymbolConfig("SOL-USD", min_size=0.1,   tick_size=0.001, max_leverage=20),
 }
+
+# ── Hyperliquid Settings ─────────────────────────────────────
+# Symbol mapping: BulkMind uses "BTC-USD" internally, Hyperliquid uses "BTC"
+HL_SYMBOL_MAP = {
+    "BTC-USD": "BTC",
+    "ETH-USD": "ETH",
+    "SOL-USD": "SOL",
+}
+HL_SYMBOL_MAP_REVERSE = {v: k for k, v in HL_SYMBOL_MAP.items()}
+
+# Hyperliquid asset indices (for order placement)
+HL_ASSET_IDS = {
+    "BTC": 0,
+    "ETH": 1,
+    "SOL": 5,
+}
+
+HL_PAPER_MODE = True                   # paper trading default

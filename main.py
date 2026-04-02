@@ -13,10 +13,14 @@ from bulk_stream import BulkStream
 from bulk_profile import BulkProfile
 from bulk_sol import BulkSOL
 from breakout_bot import BreakoutBot
-from news_trader import NewsTrader
+from news_trader import NewsTrader, ExchangeVenue
+from hyperliquid import HyperliquidClient, HyperliquidExecutor
 from dashboard import Dashboard
 from evoskill_integration import run_evoskill_loop
-from config import BREAKOUT_PAPER_MODE, NEWS_PAPER_MODE, DASHBOARD_PORT
+from config import (
+    BREAKOUT_PAPER_MODE, NEWS_PAPER_MODE, NEWS_EXCHANGES,
+    HL_PAPER_MODE, DASHBOARD_PORT,
+)
 
 
 async def main():
@@ -41,12 +45,27 @@ async def main():
     dashboard = Dashboard(reporter, bulksol)
 
     async with aiohttp.ClientSession() as session:
-        client        = BulkClient(session)
-        executor      = BulkExecutor(client, paper=BREAKOUT_PAPER_MODE)
-        bot           = BreakoutBot(executor, client, reporter)
-        news_executor = BulkExecutor(client, paper=NEWS_PAPER_MODE)
-        news_trader   = NewsTrader(news_executor, client, reporter, session)
+        # ── Bulk exchange ────────────────────────────────────
+        client   = BulkClient(session)
+        executor = BulkExecutor(client, paper=BREAKOUT_PAPER_MODE)
+        bot      = BreakoutBot(executor, client, reporter)
 
+        # ── Multi-exchange NewsTrader ────────────────────────
+        news_venues = []
+        if "bulk" in NEWS_EXCHANGES:
+            bulk_news_exec = BulkExecutor(client, paper=NEWS_PAPER_MODE)
+            news_venues.append(
+                ExchangeVenue("bulk", client, bulk_news_exec, paper=NEWS_PAPER_MODE)
+            )
+        if "hyperliquid" in NEWS_EXCHANGES:
+            hl_client = HyperliquidClient(session)
+            hl_exec   = HyperliquidExecutor(hl_client, paper=HL_PAPER_MODE)
+            news_venues.append(
+                ExchangeVenue("hyperliquid", hl_client, hl_exec, paper=HL_PAPER_MODE)
+            )
+        news_trader = NewsTrader(news_venues, reporter, session)
+
+        venue_str = ", ".join(v.name for v in news_venues)
         await reporter.send(
             "🟢 *BulkMind Online*\n"
             f"BulkWatch: ✅\n"
@@ -54,7 +73,7 @@ async def main():
             f"BulkProfile: ✅\n"
             f"BulkSOL: ✅\n"
             f"BreakoutBot: ✅\n"
-            f"NewsTrader: ✅\n"
+            f"NewsTrader: ✅ ({venue_str})\n"
             f"Dashboard: ✅\n"
             f"Mode: `{'PAPER' if BREAKOUT_PAPER_MODE else 'LIVE'}`"
         )

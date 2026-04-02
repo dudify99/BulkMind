@@ -1,6 +1,7 @@
 """
-NewsTrader — LLM-Powered News Trading Agent
-Strategy: Monitor crypto news sources, analyze with Claude, trade high-impact events
+NewsTrader — LLM-Powered News Trading Agent (Multi-Exchange)
+Strategy: Monitor crypto news sources, analyze with Claude, trade high-impact
+events on both Bulk and Hyperliquid simultaneously.
 """
 
 import asyncio
@@ -8,11 +9,10 @@ import json
 import hashlib
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 import aiohttp
 
-from executor import BulkClient, BulkExecutor
 from ta import atr, compute_sl_tp, position_size
 from db import (
     log_trade, close_trade, get_open_trades, get_agent_stats, log_issue,
@@ -20,10 +20,11 @@ from db import (
 )
 from reporter import Reporter
 from config import (
-    NEWS_SYMBOLS, NEWS_POLL_INTERVAL_SEC, NEWS_MIN_IMPACT_SCORE,
-    NEWS_ATR_MULT, NEWS_TP_RATIO, NEWS_MAX_POSITION_USD,
-    NEWS_MAX_HOLD_MIN, NEWS_MAX_AGE_MIN, NEWS_PAPER_MODE,
-    NEWS_LLM_MODEL, CRYPTOPANIC_API_KEY, ANTHROPIC_API_KEY,
+    NEWS_EXCHANGES, NEWS_SYMBOLS, NEWS_POLL_INTERVAL_SEC,
+    NEWS_MIN_IMPACT_SCORE, NEWS_ATR_MULT, NEWS_TP_RATIO,
+    NEWS_MAX_POSITION_USD, NEWS_MAX_HOLD_MIN, NEWS_MAX_AGE_MIN,
+    NEWS_PAPER_MODE, NEWS_LLM_MODEL, CRYPTOPANIC_API_KEY,
+    ANTHROPIC_API_KEY, HL_SYMBOL_MAP,
 )
 
 AGENT_NAME = "NewsTrader"
@@ -36,16 +37,31 @@ RSS_FEEDS = [
 ]
 
 
+class ExchangeVenue:
+    """Lightweight wrapper pairing a name with its client + executor."""
+    __slots__ = ("name", "client", "executor", "paper")
+
+    def __init__(self, name: str, client, executor, paper: bool = True):
+        self.name     = name
+        self.client   = client
+        self.executor = executor
+        self.paper    = paper
+
+    def resolve_symbol(self, symbol: str) -> str:
+        """Map internal symbol (BTC-USD) to exchange-specific symbol."""
+        if self.name == "hyperliquid":
+            return HL_SYMBOL_MAP.get(symbol, symbol)
+        return symbol
+
+
 class NewsTrader:
-    def __init__(self, executor: BulkExecutor,
-                 client: BulkClient,
+    def __init__(self, venues: List[ExchangeVenue],
                  reporter: Reporter,
                  session: aiohttp.ClientSession):
-        self.executor    = executor
-        self.client      = client
-        self.reporter    = reporter
-        self.session     = session
-        self.open_trades: Dict[int, dict] = {}  # trade_id → trade info + entry_ts
+        self.venues: List[ExchangeVenue] = venues
+        self.reporter  = reporter
+        self.session   = session
+        self.open_trades: Dict[int, dict] = {}  # trade_id → trade info
         self._seen_ids: set = set()             # in-memory dedup cache
 
     # ── News Fetching ─────────────────────────────────────────
@@ -244,16 +260,18 @@ class NewsTrader:
         analysis["article"] = article
         return analysis
 
-    # ── Signal Generation ─────────────────────────────────────
+    # ── Signal Generation (per exchange) ──────────────────────
 
-    async def get_signal(self, symbol: str, analysis: dict) -> Optional[dict]:
+    async def get_signal(self, symbol: str, analysis: dict,
+                         venue: ExchangeVenue) -> Optional[dict]:
         """
-        Build a trade signal from a news analysis result.
-        Uses recent 15m ATR for SL/TP sizing.
+        Build a trade signal for a specific exchange venue.
+        Uses that venue's candles + ticker for accurate pricing.
         """
         direction = "BUY" if analysis["sentiment"] == "BUY" else "SELL"
+        ex_symbol = venue.resolve_symbol(symbol)
 
-        raw = await self.client.get_candles(symbol, interval="15m", limit=20)
+        raw = await venue.client.get_candles(ex_symbol, interval="15m", limit=20)
         if len(raw) < 5:
             return None
 
@@ -262,7 +280,7 @@ class NewsTrader:
             return None
         current_atr = atr_vals[-1]
 
-        ticker = await self.client.get_ticker(symbol)
+        ticker = await venue.client.get_ticker(ex_symbol)
         if not ticker:
             return None
         entry = float(
@@ -279,7 +297,9 @@ class NewsTrader:
         size = position_size(NEWS_MAX_POSITION_USD, entry, levels["sl"])
 
         return {
-            "symbol":    symbol,
+            "symbol":    symbol,         # internal symbol (BTC-USD)
+            "ex_symbol": ex_symbol,      # exchange-specific symbol
+            "exchange":  venue.name,
             "direction": direction,
             "entry":     entry,
             "sl":        levels["sl"],
@@ -294,21 +314,23 @@ class NewsTrader:
             "timestamp": datetime.utcnow().isoformat(),
         }
 
-    # ── Trade Execution ───────────────────────────────────────
+    # ── Trade Execution (per exchange) ────────────────────────
 
-    async def execute_signal(self, signal: dict,
+    async def execute_signal(self, signal: dict, venue: ExchangeVenue,
                              news_event_id: int) -> Optional[int]:
-        symbol = signal["symbol"]
-        side   = signal["direction"]
+        symbol    = signal["symbol"]
+        ex_symbol = signal["ex_symbol"]
+        side      = signal["direction"]
+        agent_tag = f"{AGENT_NAME}:{venue.name}"
 
-        # Max one position per symbol
-        for t in get_open_trades(AGENT_NAME):
+        # Max one position per symbol per exchange
+        for t in get_open_trades(agent_tag):
             if t["symbol"] == symbol:
-                print(f"  [{symbol}] Already have open NewsTrader position, skipping")
+                print(f"  [{venue.name}/{symbol}] Already have open position, skipping")
                 return None
 
-        result = await self.executor.place_bracket(
-            symbol      = symbol,
+        result = await venue.executor.place_bracket(
+            symbol      = ex_symbol,
             side        = side,
             entry_price = signal["entry"],
             size        = signal["size"],
@@ -318,12 +340,12 @@ class NewsTrader:
 
         if not result:
             log_issue("HIGH", "AGENT_ERROR",
-                      f"NewsTrader failed to place order on {symbol}",
+                      f"NewsTrader/{venue.name} failed to place order on {symbol}",
                       json.dumps(signal))
             return None
 
         trade_id = log_trade(
-            agent       = AGENT_NAME,
+            agent       = agent_tag,
             symbol      = symbol,
             side        = side,
             entry_price = signal["entry"],
@@ -331,7 +353,7 @@ class NewsTrader:
             sl          = signal["sl"],
             tp          = signal["tp"],
             signal_data = signal,
-            paper       = NEWS_PAPER_MODE,
+            paper       = venue.paper,
             order_id    = result.get("order_id", ""),
         )
 
@@ -339,6 +361,7 @@ class NewsTrader:
 
         self.open_trades[trade_id] = {
             "symbol":   symbol,
+            "exchange": venue.name,
             "side":     side,
             "entry":    signal["entry"],
             "sl":       signal["sl"],
@@ -349,6 +372,7 @@ class NewsTrader:
 
         await self.reporter.send(
             f"📰 *NewsTrader — New Trade*\n"
+            f"Exchange: `{venue.name}`\n"
             f"Symbol: `{symbol}`\n"
             f"Side: `{side}`\n"
             f"Entry: `{signal['entry']}`\n"
@@ -358,11 +382,17 @@ class NewsTrader:
             f"Source: `{signal['source']}`\n"
             f"Headline: _{signal['headline'][:80]}_\n"
             f"Reason: _{signal['reasoning']}_\n"
-            f"Paper: `{NEWS_PAPER_MODE}`"
+            f"Paper: `{venue.paper}`"
         )
         return trade_id
 
     # ── Trade Management ──────────────────────────────────────
+
+    def _venue_by_name(self, name: str) -> Optional[ExchangeVenue]:
+        for v in self.venues:
+            if v.name == name:
+                return v
+        return None
 
     async def manage_open_trades(self):
         """Close positions on SL/TP hit or when max hold time is exceeded."""
@@ -371,7 +401,12 @@ class NewsTrader:
 
         now = datetime.utcnow()
         for trade_id, trade in list(self.open_trades.items()):
-            ticker = await self.client.get_ticker(trade["symbol"])
+            venue = self._venue_by_name(trade["exchange"])
+            if not venue:
+                continue
+
+            ex_symbol = venue.resolve_symbol(trade["symbol"])
+            ticker = await venue.client.get_ticker(ex_symbol)
             if not ticker:
                 continue
 
@@ -406,8 +441,8 @@ class NewsTrader:
                         (side == "SELL" and price < trade["entry"])
                     ) else "LOSS"
                     print(
-                        f"  [{trade['symbol']}] NewsTrader time-exit "
-                        f"after {elapsed_min:.0f} min → {status}"
+                        f"  [{trade['exchange']}/{trade['symbol']}] "
+                        f"NewsTrader time-exit after {elapsed_min:.0f} min → {status}"
                     )
 
             if status:
@@ -417,6 +452,7 @@ class NewsTrader:
                 emoji = "✅" if status == "WIN" else "❌"
                 await self.reporter.send(
                     f"{emoji} *NewsTrader — Trade Closed*\n"
+                    f"Exchange: `{trade['exchange']}`\n"
                     f"Symbol: `{trade['symbol']}`\n"
                     f"Status: `{status}`\n"
                     f"Exit: `{price}`\n"
@@ -427,35 +463,37 @@ class NewsTrader:
     # ── Performance Report ────────────────────────────────────
 
     async def report_performance(self):
-        stats = get_agent_stats(AGENT_NAME)
-        if not stats or not stats.get("total"):
-            return
+        """Report performance across all venues."""
+        for venue in self.venues:
+            agent_tag = f"{AGENT_NAME}:{venue.name}"
+            stats = get_agent_stats(agent_tag)
+            if not stats or not stats.get("total"):
+                continue
 
-        total  = stats["total"] or 0
-        wins   = stats["wins"] or 0
-        losses = stats["losses"] or 0
-        pnl    = stats["total_pnl"] or 0
-        wr     = (wins / total * 100) if total > 0 else 0
+            total  = stats["total"] or 0
+            wins   = stats["wins"] or 0
+            losses = stats["losses"] or 0
+            pnl    = stats["total_pnl"] or 0
+            wr     = (wins / total * 100) if total > 0 else 0
 
-        await self.reporter.send(
-            f"📰 *NewsTrader Performance*\n"
-            f"Total Trades: `{total}`\n"
-            f"Wins: `{wins}` | Losses: `{losses}`\n"
-            f"Win Rate: `{wr:.1f}%`\n"
-            f"Total PnL: `${pnl:.2f}`\n"
-            f"Avg PnL%: `{stats.get('avg_pnl_pct', 0):.2f}%`"
-        )
+            await self.reporter.send(
+                f"📰 *NewsTrader Performance ({venue.name})*\n"
+                f"Total Trades: `{total}`\n"
+                f"Wins: `{wins}` | Losses: `{losses}`\n"
+                f"Win Rate: `{wr:.1f}%`\n"
+                f"Total PnL: `${pnl:.2f}`\n"
+                f"Avg PnL%: `{stats.get('avg_pnl_pct', 0):.2f}%`"
+            )
 
     # ── EvoSkill: Export failure trajectories ─────────────────
 
     def export_failure_trajectories(self,
                                     output_path: str = "data/news_failures.json"):
-        """Export losing trades as EvoSkill failure trajectories."""
+        """Export losing trades from all venues as EvoSkill failure trajectories."""
         conn_db = get_conn()
         rows = conn_db.execute(
-            "SELECT * FROM trades WHERE agent=? AND status='LOSS' "
+            "SELECT * FROM trades WHERE agent LIKE 'NewsTrader%' AND status='LOSS' "
             "ORDER BY ts DESC LIMIT 100",
-            (AGENT_NAME,)
         ).fetchall()
         conn_db.close()
 
@@ -468,12 +506,13 @@ class NewsTrader:
                 "ground_truth": "NO",
                 "agent_answer": "YES",
                 "context": {
-                    "entry":   d["entry_price"],
-                    "sl":      d["sl_price"],
-                    "tp":      d["tp_price"],
-                    "exit":    d["exit_price"],
-                    "pnl_pct": d["pnl_pct"],
-                    "signal":  signal,
+                    "entry":    d["entry_price"],
+                    "sl":       d["sl_price"],
+                    "tp":       d["tp_price"],
+                    "exit":     d["exit_price"],
+                    "pnl_pct":  d["pnl_pct"],
+                    "exchange": signal.get("exchange", "unknown"),
+                    "signal":   signal,
                 },
             })
 
@@ -488,7 +527,8 @@ class NewsTrader:
     # ── Main Loop ─────────────────────────────────────────────
 
     async def run(self):
-        print(f"📰 {AGENT_NAME} started — Paper mode: {NEWS_PAPER_MODE}")
+        venue_names = [v.name for v in self.venues]
+        print(f"📰 {AGENT_NAME} started — Exchanges: {venue_names}")
         scan_count = 0
 
         while True:
@@ -535,10 +575,16 @@ class NewsTrader:
                     conn.close()
                     event_id = row["id"] if row else 0
 
+                    # Trade on all venues in parallel
                     for symbol in analysis["symbols"]:
-                        signal = await self.get_signal(symbol, analysis)
-                        if signal:
-                            await self.execute_signal(signal, event_id)
+                        tasks = []
+                        for venue in self.venues:
+                            tasks.append(
+                                self._signal_and_execute(
+                                    symbol, analysis, venue, event_id
+                                )
+                            )
+                        await asyncio.gather(*tasks, return_exceptions=True)
 
                 # Check open trades every poll cycle
                 await self.manage_open_trades()
@@ -556,3 +602,10 @@ class NewsTrader:
                           "NewsTrader runtime error", str(e))
 
             await asyncio.sleep(NEWS_POLL_INTERVAL_SEC)
+
+    async def _signal_and_execute(self, symbol: str, analysis: dict,
+                                  venue: ExchangeVenue, event_id: int):
+        """Helper: generate signal and execute for one venue."""
+        signal = await self.get_signal(symbol, analysis, venue)
+        if signal:
+            await self.execute_signal(signal, venue, event_id)
