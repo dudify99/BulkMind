@@ -25,6 +25,8 @@ from config import (
     NEWS_MAX_POSITION_USD, NEWS_MAX_HOLD_MIN, NEWS_MAX_AGE_MIN,
     NEWS_PAPER_MODE, NEWS_LLM_MODEL, CRYPTOPANIC_API_KEY,
     ANTHROPIC_API_KEY, HL_SYMBOL_MAP,
+    X_BEARER_TOKEN, X_SEARCH_QUERIES, X_TRACKED_ACCOUNTS,
+    X_MAX_RESULTS,
 )
 
 AGENT_NAME = "NewsTrader"
@@ -155,9 +157,140 @@ class NewsTrader:
             print(f"  [NewsTrader] RSS {name} fetch error: {e}")
             return []
 
+    # ── X/Twitter Fetching ─────────────────────────────────────
+
+    async def _fetch_x_search(self) -> List[dict]:
+        """Fetch recent tweets matching crypto news search queries via X API v2."""
+        if not X_BEARER_TOKEN:
+            return []
+
+        headers = {
+            "Authorization": f"Bearer {X_BEARER_TOKEN}",
+            "User-Agent":    "BulkMind/1.0 NewsTrader",
+        }
+        all_tweets: List[dict] = []
+
+        for query in X_SEARCH_QUERIES:
+            try:
+                params = {
+                    "query":        query,
+                    "max_results":  min(X_MAX_RESULTS, 100),
+                    "tweet.fields": "created_at,author_id,text,public_metrics",
+                    "expansions":   "author_id",
+                    "user.fields":  "username",
+                }
+                async with self.session.get(
+                    "https://api.x.com/2/tweets/search/recent",
+                    headers=headers, params=params,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 429:
+                        print("  [NewsTrader] X API rate limited, backing off")
+                        return all_tweets
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+
+                    # Build username lookup from includes
+                    users = {}
+                    for u in data.get("includes", {}).get("users", []):
+                        users[u["id"]] = u.get("username", "")
+
+                    for tweet in data.get("data", []):
+                        tweet_id  = tweet.get("id", "")
+                        author_id = tweet.get("author_id", "")
+                        username  = users.get(author_id, "")
+                        text      = tweet.get("text", "")
+                        metrics   = tweet.get("public_metrics", {})
+
+                        # Skip low-engagement tweets (noise filter)
+                        likes = metrics.get("like_count", 0)
+                        rts   = metrics.get("retweet_count", 0)
+                        if likes + rts < 5:
+                            continue
+
+                        all_tweets.append({
+                            "id":           f"x_{tweet_id}",
+                            "title":        text[:280],
+                            "body":         text,
+                            "source":       "x",
+                            "url":          f"https://x.com/{username}/status/{tweet_id}",
+                            "published_at": tweet.get("created_at", ""),
+                            "author":       f"@{username}",
+                            "engagement":   likes + rts,
+                        })
+            except Exception as e:
+                print(f"  [NewsTrader] X search error: {e}")
+
+        return all_tweets
+
+    async def _fetch_x_accounts(self) -> List[dict]:
+        """Fetch recent tweets from tracked high-signal CT accounts."""
+        if not X_BEARER_TOKEN or not X_TRACKED_ACCOUNTS:
+            return []
+
+        headers = {
+            "Authorization": f"Bearer {X_BEARER_TOKEN}",
+            "User-Agent":    "BulkMind/1.0 NewsTrader",
+        }
+
+        # Build a single OR query for all tracked accounts
+        accounts_query = " OR ".join(
+            f"from:{acct}" for acct in X_TRACKED_ACCOUNTS
+        )
+        query = f"({accounts_query}) -is:retweet"
+
+        try:
+            params = {
+                "query":        query,
+                "max_results":  min(X_MAX_RESULTS, 100),
+                "tweet.fields": "created_at,author_id,text,public_metrics",
+                "expansions":   "author_id",
+                "user.fields":  "username",
+            }
+            async with self.session.get(
+                "https://api.x.com/2/tweets/search/recent",
+                headers=headers, params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 429:
+                    print("  [NewsTrader] X API rate limited, backing off")
+                    return []
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+
+                users = {}
+                for u in data.get("includes", {}).get("users", []):
+                    users[u["id"]] = u.get("username", "")
+
+                articles = []
+                for tweet in data.get("data", []):
+                    tweet_id  = tweet.get("id", "")
+                    author_id = tweet.get("author_id", "")
+                    username  = users.get(author_id, "")
+                    text      = tweet.get("text", "")
+
+                    articles.append({
+                        "id":           f"x_{tweet_id}",
+                        "title":        text[:280],
+                        "body":         text,
+                        "source":       "x",
+                        "url":          f"https://x.com/{username}/status/{tweet_id}",
+                        "published_at": tweet.get("created_at", ""),
+                        "author":       f"@{username}",
+                        "engagement":   0,
+                    })
+                return articles
+        except Exception as e:
+            print(f"  [NewsTrader] X accounts fetch error: {e}")
+            return []
+
     async def fetch_news(self) -> List[dict]:
-        """Aggregate + deduplicate news from all sources."""
+        """Aggregate + deduplicate news from all sources (X, CryptoPanic, CoinGecko, RSS)."""
         tasks = [
+            self._fetch_x_search(),
+            self._fetch_x_accounts(),
             self._fetch_cryptopanic(),
             self._fetch_coingecko(),
             *[self._fetch_rss(name, url) for name, url in RSS_FEEDS],
@@ -194,13 +327,18 @@ class NewsTrader:
         body   = article.get("body",  "")[:500]
         source = article.get("source", "unknown")
         pub    = article.get("published_at", "")
+        author = article.get("author", "")
+
+        source_line = f"Source: {source}"
+        if author:
+            source_line += f" ({author})"
 
         prompt = (
             "You are a crypto news trading analyst. Analyze this article and determine "
             "its trading impact.\n\n"
             f"Headline: {title}\n"
             f"Summary: {body}\n"
-            f"Source: {source}\n"
+            f"{source_line}\n"
             f"Published: {pub}\n\n"
             "Tradeable symbols: BTC-USD, ETH-USD, SOL-USD\n\n"
             'Respond in EXACTLY this JSON format (no markdown, no extra text):\n'
