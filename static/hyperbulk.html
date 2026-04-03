@@ -123,6 +123,21 @@ a{color:var(--accent);text-decoration:none}
 .modal-actions .btn-cancel{background:var(--bg);color:var(--text2);border:1px solid var(--border)}
 .modal-actions .btn-confirm{background:var(--accent);color:#000}
 
+/* Live Feed */
+.live-feed{max-height:200px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.feed-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);font-size:.78rem;font-family:monospace;animation:feedIn .3s ease}
+.feed-item .feed-side{font-weight:700;min-width:36px}
+.feed-item .feed-side.buy{color:var(--accent)}
+.feed-item .feed-side.sell{color:var(--red)}
+.feed-item .feed-symbol{color:var(--text);font-weight:600;min-width:64px}
+.feed-item .feed-price{color:var(--text2)}
+.feed-item .feed-size{color:var(--text2)}
+.feed-item .feed-time{color:var(--text2);font-size:.68rem;min-width:50px;text-align:right}
+@keyframes feedIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.ws-status{font-size:.65rem;padding:2px 8px;border-radius:8px;font-weight:700}
+.ws-status.connected{color:var(--accent);background:rgba(0,255,136,.1)}
+.ws-status.disconnected{color:var(--red);background:rgba(255,68,68,.1)}
+
 /* Empty state */
 .empty{text-align:center;padding:40px 20px;color:var(--text2);font-size:.85rem}
 
@@ -138,7 +153,10 @@ a{color:var(--accent);text-decoration:none}
 <!-- Header -->
 <div class="header">
   <div class="logo">HyperBulk</div>
-  <button class="btn-connect" id="btn-wallet" onclick="connectWallet()">Connect Wallet</button>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span class="ws-status disconnected" id="ws-badge">LIVE</span>
+    <button class="btn-connect" id="btn-wallet" onclick="connectWallet()">Connect Wallet</button>
+  </div>
 </div>
 
 <!-- 3D Globe -->
@@ -187,6 +205,8 @@ a{color:var(--accent);text-decoration:none}
   </div>
   <div class="section-title">Open Positions</div>
   <div id="open-positions"><div class="empty">No open positions</div></div>
+  <div class="section-title">Live Trade Feed</div>
+  <div class="live-feed" id="live-feed"><div class="empty">Connecting to live feed...</div></div>
 </div>
 
 <!-- Leaderboard Tab -->
@@ -563,16 +583,17 @@ function initGlobe() {
   const starsMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.03, transparent: true, opacity: 0.6 });
   scene.add(new THREE.Points(starsGeo, starsMat));
 
-  // Trade dots
+  // Trade dots — driven by WebSocket or simulated fallback
   const dots = [];
-  function addDot() {
+  let wsTradeCount = 0;  // Track if real trades are flowing
+
+  function spawnDot(isBuy) {
     const phi = Math.random() * Math.PI;
     const theta = Math.random() * Math.PI * 2;
     const r = 1.02;
     const x = r * Math.sin(phi) * Math.cos(theta);
     const y = r * Math.cos(phi);
     const z = r * Math.sin(phi) * Math.sin(theta);
-    const isBuy = Math.random() > 0.4;
     const dotGeo = new THREE.SphereGeometry(0.025, 6, 6);
     const dotMat = new THREE.MeshBasicMaterial({ color: isBuy ? 0x00ff88 : 0xff4444, transparent: true, opacity: 1 });
     const dot = new THREE.Mesh(dotGeo, dotMat);
@@ -581,7 +602,17 @@ function initGlobe() {
     dots.push({ mesh: dot, born: Date.now() });
   }
 
-  setInterval(addDot, 2000);
+  // Exposed to WebSocket handler
+  window.addTradeToGlobe = function(isBuy) {
+    wsTradeCount++;
+    spawnDot(isBuy);
+  };
+
+  // Simulated fallback — only fires if no real trades in last 5s
+  setInterval(() => {
+    if (wsTradeCount === 0) spawnDot(Math.random() > 0.4);
+    wsTradeCount = 0;  // Reset counter each interval
+  }, 2000);
 
   function animate() {
     requestAnimationFrame(animate);
@@ -605,6 +636,85 @@ function initGlobe() {
   });
 }
 
+// --- WebSocket Live Feed ---
+let ws = null;
+let wsRetryCount = 0;
+const MAX_FEED_ITEMS = 30;
+
+function connectWebSocket() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+  ws.onopen = () => {
+    wsRetryCount = 0;
+    const badge = document.getElementById('ws-badge');
+    badge.textContent = 'LIVE';
+    badge.className = 'ws-status connected';
+    console.log('[WS] Connected');
+    const feed = document.getElementById('live-feed');
+    if (feed.querySelector('.empty')) feed.innerHTML = '';
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'trade') {
+        const trade = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+        handleLiveTrade(trade);
+      } else if (msg.type === 'alert') {
+        showToast(msg.content.slice(0, 80), 'error');
+      }
+    } catch (e) {}
+  };
+
+  ws.onclose = () => {
+    const badge = document.getElementById('ws-badge');
+    badge.textContent = 'OFFLINE';
+    badge.className = 'ws-status disconnected';
+    // Reconnect with backoff
+    const delay = Math.min(2000 * Math.pow(2, wsRetryCount), 30000);
+    wsRetryCount++;
+    console.log('[WS] Reconnecting in ' + delay + 'ms...');
+    setTimeout(connectWebSocket, delay);
+  };
+
+  ws.onerror = () => {};
+}
+
+function handleLiveTrade(trade) {
+  // 1. Add dot on globe
+  if (typeof addTradeToGlobe === 'function') {
+    addTradeToGlobe(trade.side === 'buy' || trade.side === 'BUY');
+  }
+
+  // 2. Update price display if symbol matches
+  if (trade.symbol === symbol) {
+    const p = trade.price;
+    document.getElementById('price-main').textContent = '$' + p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  // 3. Add to live feed panel
+  const feed = document.getElementById('live-feed');
+  if (feed.querySelector('.empty')) feed.innerHTML = '';
+
+  const side = (trade.side || '').toLowerCase();
+  const ts = trade.ts ? new Date(trade.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+  const item = document.createElement('div');
+  item.className = 'feed-item';
+  item.innerHTML = `
+    <span class="feed-side ${side}">${side.toUpperCase()}</span>
+    <span class="feed-symbol">${trade.symbol || '--'}</span>
+    <span class="feed-price">$${(trade.price || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+    <span class="feed-size">${(trade.size || 0).toFixed(4)}</span>
+    <span class="feed-time">${ts}</span>`;
+  feed.prepend(item);
+
+  // Trim old entries
+  while (feed.children.length > MAX_FEED_ITEMS) {
+    feed.removeChild(feed.lastChild);
+  }
+}
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
   initGlobe();
@@ -612,6 +722,7 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchAchievements();
   fetchLeaderboard('daily');
   marketInterval = setInterval(fetchMarket, 5000);
+  connectWebSocket();
 });
 </script>
 </body>

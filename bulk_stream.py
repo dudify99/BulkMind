@@ -102,6 +102,17 @@ class BulkStream:
                 raw_data=json.dumps(trade)
             )
 
+            # Broadcast to all WebSocket clients (drives HyperBulk globe + feed)
+            await self.reporter.broadcast_trade({
+                "symbol": symbol,
+                "side": side,
+                "price": price,
+                "size": size,
+                "value_usd": round(value_usd, 2),
+                "reason": reason,
+                "ts": datetime.utcnow().isoformat(),
+            })
+
             # Discover wallets
             if maker:
                 upsert_discovered_wallet(maker)

@@ -56,6 +56,10 @@ class Reporter:
             return_exceptions=True,
         )
 
+    async def broadcast_trade(self, trade: dict):
+        """Broadcast a live trade event to all WebSocket clients (lightweight, no Telegram/Discord)."""
+        await self._ws_broadcast("trade", json.dumps(trade))
+
     # ── WebSocket (Dashboard) ──────────────────────────────────
 
     def register_ws(self, ws):
