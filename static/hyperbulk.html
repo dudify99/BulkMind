@@ -664,6 +664,9 @@ function connectWebSocket() {
       if (msg.type === 'trade') {
         const trade = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
         handleLiveTrade(trade);
+      } else if (msg.type === 'pnl_update') {
+        const updates = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+        handlePnlUpdate(updates);
       } else if (msg.type === 'alert') {
         showToast(msg.content.slice(0, 80), 'error');
       }
@@ -718,6 +721,21 @@ function handleLiveTrade(trade) {
   // Trim old entries
   while (feed.children.length > MAX_FEED_ITEMS) {
     feed.removeChild(feed.lastChild);
+  }
+}
+
+// --- Live PnL Updates ---
+function handlePnlUpdate(updates) {
+  if (!Array.isArray(updates)) return;
+  for (const u of updates) {
+    const el = document.getElementById('pos-' + u.trade_id);
+    if (!el) continue;
+    const pnlEl = el.querySelector('.pos-pnl');
+    if (pnlEl) {
+      const pnl = u.pnl_usd || 0;
+      pnlEl.textContent = '$' + pnl.toFixed(2);
+      pnlEl.className = 'pos-pnl ' + (pnl >= 0 ? 'green' : 'red');
+    }
   }
 }
 

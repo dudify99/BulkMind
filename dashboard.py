@@ -26,9 +26,12 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 
 class Dashboard:
-    def __init__(self, reporter: Reporter, bulksol=None):
+    def __init__(self, reporter: Reporter, bulksol=None,
+                 bulk_executor=None, hl_executor=None):
         self.reporter = reporter
         self.bulksol = bulksol
+        self.bulk_executor = bulk_executor
+        self.hl_executor = hl_executor
         self.app = web.Application()
         self._setup_routes()
 
@@ -418,13 +421,14 @@ class Dashboard:
             return web.json_response({"error": str(e)}, status=500)
 
     async def _hb_trade(self, request):
-        """Open a new HyperBulk trade on one or both exchanges."""
+        """Open a new HyperBulk trade on one or both exchanges.
+        Calls real executors (paper or live) and logs to DB."""
         try:
             body = await request.json()
             wallet = body.get("wallet")
             exchange = body.get("exchange", "bulk")
             symbol = body.get("symbol", "BTC-USD")
-            side = body.get("side", "BUY")
+            side = body.get("side", "BUY").upper()
             size = float(body.get("size", 0))
 
             if not wallet or size <= 0:
@@ -438,79 +442,160 @@ class Dashboard:
             if not user:
                 return web.json_response({"error": "User not found. Register first."}, status=404)
 
-            # Fetch current price from Bulk API for fill price
-            fill_price = 0.0
-            try:
-                async with aiohttp.ClientSession() as session:
-                    url = f"{BULK_API_BASE}/ticker/{symbol}"
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                        if resp.status == 200:
-                            t = await resp.json(content_type=None)
-                            fill_price = float(t.get("lastPrice", 0))
-            except Exception:
-                pass
+            # Determine which exchanges to execute on
+            venues = []
+            if exchange in ("bulk", "both"):
+                venues.append("bulk")
+            if exchange in ("hyperliquid", "both"):
+                venues.append("hyperliquid")
 
-            trades = []
-            exchanges_to_execute = []
-            if exchange == "both":
-                exchanges_to_execute = ["bulk", "hyperliquid"]
-            else:
-                exchanges_to_execute = [exchange]
+            results = []
+            for ex in venues:
+                # Get fill price from the correct exchange
+                fill_price = await self._get_price(symbol, ex)
 
-            for ex in exchanges_to_execute:
-                trade = hb_log_trade(
+                # Execute via real executor
+                order_id = ""
+                executor = self.bulk_executor if ex == "bulk" else self.hl_executor
+                if executor:
+                    ex_symbol = symbol
+                    if ex == "hyperliquid":
+                        from config import HL_SYMBOL_MAP
+                        ex_symbol = HL_SYMBOL_MAP.get(symbol, symbol)
+                    order = await executor.place_order(
+                        symbol=ex_symbol, side=side,
+                        price=fill_price, size=size,
+                        order_type="limit",
+                    )
+                    if order:
+                        order_id = order.get("order_id", "")
+                        fill_price = float(order.get("price", fill_price))
+
+                # Log to HyperBulk DB
+                trade_id = hb_log_trade(
                     user_id=user["id"],
                     exchange=ex,
                     symbol=symbol,
                     side=side,
                     size=size,
                     entry_price=fill_price,
+                    order_id=order_id,
                 )
-                trades.append(trade)
+
+                results.append({
+                    "trade_id": trade_id,
+                    "exchange": ex,
+                    "fill_price": fill_price,
+                    "order_id": order_id,
+                })
+
+            # Check "both_barrels" achievement
+            if len(venues) == 2:
+                hb_award_achievement(user["id"], "both_barrels")
+
+            # Check "first_blood" on first trade
+            stats = hb_get_user_stats(user["id"])
+            if stats.get("total_trades", 0) <= len(venues):
+                hb_award_achievement(user["id"], "first_blood")
+
+            # Broadcast trade event for live feed
+            for r in results:
+                await self.reporter.broadcast_trade({
+                    "symbol": symbol,
+                    "side": side.lower(),
+                    "price": r["fill_price"],
+                    "size": size,
+                    "value_usd": round(r["fill_price"] * size, 2),
+                    "exchange": r["exchange"],
+                    "reason": "hyperbulk",
+                    "ts": datetime.utcnow().isoformat(),
+                })
 
             return web.json_response({
-                "trades": trades,
-                "fill_price": fill_price,
+                "trades": results,
                 "exchange": exchange,
-                "mode": "paper",
+                "paper": bool(executor and executor.paper) if executor else True,
             })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
-    async def _hb_close_trade(self, request):
-        """Close an open HyperBulk trade."""
+    async def _get_price(self, symbol: str, exchange: str) -> float:
+        """Fetch current price from the appropriate exchange."""
         try:
-            trade_id = request.match_info["trade_id"]
-
-            # Fetch current price for PnL calculation
-            current_price = 0.0
-            try:
-                async with aiohttp.ClientSession() as session:
-                    url = f"{BULK_API_BASE}/ticker/BTC-USD"
+            async with aiohttp.ClientSession() as session:
+                if exchange == "hyperliquid":
+                    url = f"{HL_API_BASE}/info"
+                    async with session.post(url, json={"type": "allMids"},
+                                            timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            hl_map = {"BTC-USD": "BTC", "ETH-USD": "ETH", "SOL-USD": "SOL"}
+                            hl_sym = hl_map.get(symbol, symbol.replace("-USD", ""))
+                            if hl_sym in data:
+                                return float(data[hl_sym])
+                else:
+                    url = f"{BULK_API_BASE}/ticker/{symbol}"
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                         if resp.status == 200:
                             t = await resp.json(content_type=None)
-                            current_price = float(t.get("lastPrice", 0))
-            except Exception:
-                pass
+                            return float(t.get("lastPrice", 0))
+        except Exception:
+            pass
+        return 0.0
 
-            result = hb_close_trade(int(trade_id), current_price)
-            if not result:
+    async def _hb_close_trade(self, request):
+        """Close an open HyperBulk trade with proper price from the right exchange."""
+        try:
+            trade_id = int(request.match_info["trade_id"])
+
+            # Look up the trade to get symbol + exchange
+            from db import hb_get_user_by_id
+            conn = get_conn()
+            trade_row = conn.execute(
+                "SELECT * FROM hb_trades WHERE id=? AND status='OPEN'",
+                (trade_id,)
+            ).fetchone()
+            conn.close()
+
+            if not trade_row:
                 return web.json_response({"error": "Trade not found or already closed"}, status=404)
 
-            # Check for achievements after closing a trade
-            if result.get("user_id"):
-                stats = hb_get_user_stats(result["user_id"])
-                # First trade achievement
-                if stats.get("total_trades", 0) == 1:
-                    hb_award_achievement(result["user_id"], "first_trade", "First Trade")
-                # Ten trades achievement
-                if stats.get("total_trades", 0) >= 10:
-                    hb_award_achievement(result["user_id"], "ten_trades", "10 Trades Club")
-                # Profitable streak
-                if stats.get("win_streak", 0) >= 5:
-                    hb_award_achievement(result["user_id"], "hot_streak", "Hot Streak (5 wins)")
+            trade_info = dict(trade_row)
+            symbol = trade_info["symbol"]
+            ex = trade_info.get("exchange", "bulk")
 
+            # Fetch price from the correct exchange
+            current_price = await self._get_price(symbol, ex)
+
+            result = hb_close_trade(trade_id, current_price)
+            if not result:
+                return web.json_response({"error": "Close failed"}, status=500)
+
+            # Award achievements based on updated stats
+            user_id = trade_info["user_id"]
+            stats = hb_get_user_stats(user_id)
+            new_achievements = []
+
+            checks = [
+                ("first_blood",    stats.get("total_trades", 0) >= 1),
+                ("on_fire",        stats.get("total_trades", 0) >= 10),
+                ("sniper",         stats.get("current_streak", 0) >= 5),
+                ("lightning",      True),  # TODO: check close time < 60s
+                ("whale_alert",    abs(result.get("pnl_usd", 0)) >= 10000),
+            ]
+            for ach_id, condition in checks:
+                if condition and hb_award_achievement(user_id, ach_id):
+                    new_achievements.append(ach_id)
+
+            # Check top_10 from leaderboard
+            lb = hb_get_leaderboard("alltime", limit=10)
+            for entry in lb:
+                if entry.get("user_id") == user_id:
+                    if hb_award_achievement(user_id, "top_10"):
+                        new_achievements.append("top_10")
+                    break
+
+            result["new_achievements"] = new_achievements
             return web.json_response(result)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)

@@ -4,6 +4,7 @@ Runs BulkWatch + BulkStream + BulkProfile + BulkSOL + BreakoutBot + Dashboard
 """
 
 import asyncio
+import json
 import aiohttp
 from db import init_db
 from reporter import Reporter
@@ -44,13 +45,23 @@ async def main():
     hl_stream = HLStream(reporter)
     profile   = BulkProfile(reporter)
     bulksol   = BulkSOL(reporter)
-    dashboard = Dashboard(reporter, bulksol)
 
     async with aiohttp.ClientSession() as session:
         # ── Bulk exchange ────────────────────────────────────
         client   = BulkClient(session)
         executor = BulkExecutor(client, paper=BREAKOUT_PAPER_MODE)
         bot      = BreakoutBot(executor, client, reporter)
+
+        # ── Hyperliquid exchange ─────────────────────────────
+        hl_client = HyperliquidClient(session)
+        hl_exec   = HyperliquidExecutor(hl_client, paper=HL_PAPER_MODE)
+
+        # ── HyperBulk executors for trade API ────────────────
+        hb_bulk_exec = BulkExecutor(client, paper=NEWS_PAPER_MODE)
+        hb_hl_exec   = HyperliquidExecutor(hl_client, paper=HL_PAPER_MODE)
+        dashboard = Dashboard(reporter, bulksol,
+                              bulk_executor=hb_bulk_exec,
+                              hl_executor=hb_hl_exec)
 
         # ── Multi-exchange NewsTrader ────────────────────────
         news_venues = []
@@ -60,8 +71,6 @@ async def main():
                 ExchangeVenue("bulk", client, bulk_news_exec, paper=NEWS_PAPER_MODE)
             )
         if "hyperliquid" in NEWS_EXCHANGES:
-            hl_client = HyperliquidClient(session)
-            hl_exec   = HyperliquidExecutor(hl_client, paper=HL_PAPER_MODE)
             news_venues.append(
                 ExchangeVenue("hyperliquid", hl_client, hl_exec, paper=HL_PAPER_MODE)
             )
@@ -90,8 +99,38 @@ async def main():
             bulksol.run(),          # BulkSOL: staking analytics
             bot.run(),              # BreakoutBot: TA trading agent
             news_trader.run(),      # NewsTrader: LLM news agent
+            hb_pnl_loop(reporter, dashboard),  # HyperBulk: live PnL broadcasts
             evoskill_schedule(),    # Periodic EvoSkill improvement
         )
+
+
+async def hb_pnl_loop(reporter, dashboard):
+    """Broadcast live PnL updates for open HyperBulk positions every 3 seconds."""
+    from db import hb_get_open_trades
+    while True:
+        try:
+            open_trades = hb_get_open_trades()
+            if open_trades:
+                updates = []
+                for trade in open_trades:
+                    symbol = trade["symbol"]
+                    ex = trade.get("exchange", "bulk")
+                    current_price = await dashboard._get_price(symbol, ex)
+                    if current_price and trade["entry_price"]:
+                        if trade["side"] in ("BUY", "buy"):
+                            pnl = (current_price - trade["entry_price"]) * trade["size"]
+                        else:
+                            pnl = (trade["entry_price"] - current_price) * trade["size"]
+                        updates.append({
+                            "trade_id": trade["id"],
+                            "current_price": current_price,
+                            "pnl_usd": round(pnl, 2),
+                        })
+                if updates:
+                    await reporter._ws_broadcast("pnl_update", json.dumps(updates))
+        except Exception:
+            pass
+        await asyncio.sleep(3)
 
 
 async def evoskill_schedule():
