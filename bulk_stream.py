@@ -109,6 +109,7 @@ class BulkStream:
                 "price": price,
                 "size": size,
                 "value_usd": round(value_usd, 2),
+                "exchange": "bulk",
                 "reason": reason,
                 "ts": datetime.utcnow().isoformat(),
             })

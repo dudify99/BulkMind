@@ -15,6 +15,7 @@ from bulk_sol import BulkSOL
 from breakout_bot import BreakoutBot
 from news_trader import NewsTrader, ExchangeVenue
 from hyperliquid import HyperliquidClient, HyperliquidExecutor
+from hl_stream import HLStream
 from dashboard import Dashboard
 from evoskill_integration import run_evoskill_loop
 from config import (
@@ -38,10 +39,11 @@ async def main():
     reporter  = Reporter()
 
     # Init modules
-    watch    = BulkWatch(reporter)
-    stream   = BulkStream(reporter)
-    profile  = BulkProfile(reporter)
-    bulksol  = BulkSOL(reporter)
+    watch     = BulkWatch(reporter)
+    stream    = BulkStream(reporter)
+    hl_stream = HLStream(reporter)
+    profile   = BulkProfile(reporter)
+    bulksol   = BulkSOL(reporter)
     dashboard = Dashboard(reporter, bulksol)
 
     async with aiohttp.ClientSession() as session:
@@ -82,7 +84,8 @@ async def main():
         await asyncio.gather(
             dashboard.run(),        # Web dashboard + API
             watch.run(),            # BulkWatch: exchange health
-            stream.run(),           # BulkStream: live trade feed
+            stream.run(),           # BulkStream: Bulk live trade feed
+            hl_stream.run(),        # HLStream: Hyperliquid live trade feed
             profile.run(),          # BulkProfile: wallet discovery
             bulksol.run(),          # BulkSOL: staking analytics
             bot.run(),              # BreakoutBot: TA trading agent
