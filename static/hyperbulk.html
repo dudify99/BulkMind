@@ -150,6 +150,31 @@ a{color:var(--accent);text-decoration:none}
 .chart-toggle button{background:var(--bg);border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.7rem;font-weight:600}
 .chart-toggle button.active{background:var(--accent);color:#000;border-color:var(--accent)}
 
+/* Analytics */
+.analytics-row{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:14px}
+@media(min-width:600px){.analytics-row{grid-template-columns:1fr 1fr}}
+.analytics-chart{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.analytics-chart .chart-header{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border)}
+.analytics-chart .chart-header h3{font-size:.8rem;font-weight:700;margin:0}
+.analytics-chart-body{height:250px;position:relative}
+.heatmap-canvas{width:100%;height:100%;display:block}
+.bar-row{display:flex;align-items:center;gap:6px;padding:2px 8px;font-size:.72rem;font-family:monospace}
+.bar-fill{height:14px;border-radius:3px;min-width:2px;transition:width .3s}
+.bar-fill.buy{background:var(--accent)}
+.bar-fill.sell{background:var(--red)}
+.bar-price{min-width:70px;color:var(--text2);text-align:right}
+.bar-vol{min-width:50px;color:var(--text);text-align:right;font-weight:600}
+.poc-row{background:rgba(0,255,136,.08);border-left:3px solid var(--accent)}
+.tpo-row{display:flex;align-items:center;gap:6px;padding:1px 8px;font-size:.72rem;font-family:monospace}
+.tpo-letters{color:var(--accent);letter-spacing:1px}
+.funding-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:.8rem}
+.funding-label{font-weight:700;min-width:80px}
+.funding-gauge{flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden;position:relative}
+.funding-gauge-fill{height:100%;border-radius:4px;transition:width .3s}
+.liq-level{display:flex;justify-content:space-between;padding:6px 12px;font-size:.78rem;border-bottom:1px solid var(--border)}
+.liq-level.long{border-left:3px solid var(--accent)}
+.liq-level.short{border-left:3px solid var(--red)}
+
 /* Empty state */
 .empty{text-align:center;padding:40px 20px;color:var(--text2);font-size:.85rem}
 
@@ -180,9 +205,12 @@ a{color:var(--accent);text-decoration:none}
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchTab('trade')">Trade</button>
   <button class="tab-btn" onclick="switchTab('charts')">Charts</button>
-  <button class="tab-btn" onclick="switchTab('leaderboard')">Leaderboard</button>
+  <button class="tab-btn" onclick="switchTab('orderflow')">Order Flow</button>
+  <button class="tab-btn" onclick="switchTab('liquidity')">Liquidity</button>
+  <button class="tab-btn" onclick="switchTab('deriv')">Derivatives</button>
+  <button class="tab-btn" onclick="switchTab('mprofile')">Profile</button>
+  <button class="tab-btn" onclick="switchTab('leaderboard')">Board</button>
   <button class="tab-btn" onclick="switchTab('portfolio')">Portfolio</button>
-  <button class="tab-btn" onclick="switchTab('achievements')">Achievements</button>
 </div>
 
 <!-- Trade Tab -->
@@ -247,6 +275,92 @@ a{color:var(--accent);text-decoration:none}
       <h3>PnL Equity Curve</h3>
     </div>
     <div id="pnl-chart" style="height:300px"></div>
+  </div>
+</div>
+
+<!-- Order Flow Tab -->
+<div class="tab-content" id="tab-orderflow">
+  <div class="pills" id="of-symbol-pills">
+    <div class="pill active" onclick="setOfSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setOfSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setOfSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+  <div class="analytics-chart">
+    <div class="chart-header"><h3>CVD (Cumulative Volume Delta)</h3></div>
+    <div class="analytics-chart-body" id="cvd-chart"></div>
+  </div>
+  <div class="analytics-row">
+    <div class="analytics-chart">
+      <div class="chart-header"><h3>Volume Delta</h3></div>
+      <div class="analytics-chart-body" id="delta-chart"></div>
+    </div>
+    <div class="analytics-chart">
+      <div class="chart-header"><h3>Volume Bubbles (>$5k)</h3></div>
+      <div class="analytics-chart-body" id="bubbles-chart"></div>
+    </div>
+  </div>
+  <div class="analytics-chart">
+    <div class="chart-header"><h3>Footprint (Latest Candle)</h3></div>
+    <div id="footprint-data" style="max-height:250px;overflow-y:auto"></div>
+  </div>
+</div>
+
+<!-- Liquidity Tab -->
+<div class="tab-content" id="tab-liquidity">
+  <div class="pills" id="liq-symbol-pills">
+    <div class="pill active" onclick="setLiqSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setLiqSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setLiqSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+  <div class="analytics-chart">
+    <div class="chart-header"><h3>Orderbook Depth</h3></div>
+    <div class="analytics-chart-body" id="depth-chart"></div>
+  </div>
+  <div class="analytics-chart">
+    <div class="chart-header"><h3>Orderbook Heatmap</h3></div>
+    <div class="analytics-chart-body">
+      <canvas class="heatmap-canvas" id="heatmap-canvas"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- Derivatives Tab -->
+<div class="tab-content" id="tab-deriv">
+  <div class="pills" id="deriv-symbol-pills">
+    <div class="pill active" onclick="setDerivSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setDerivSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setDerivSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+  <div class="analytics-chart">
+    <div class="chart-header"><h3>Open Interest</h3></div>
+    <div class="analytics-chart-body" id="oi-chart"></div>
+  </div>
+  <div class="analytics-row">
+    <div class="analytics-chart">
+      <div class="chart-header"><h3>Funding Rate (Bulk vs HL)</h3></div>
+      <div id="funding-data" style="padding:8px"></div>
+    </div>
+    <div class="analytics-chart">
+      <div class="chart-header"><h3>Liquidation Map</h3></div>
+      <div id="liqmap-data" style="max-height:300px;overflow-y:auto"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Profile Tab -->
+<div class="tab-content" id="tab-mprofile">
+  <div class="pills" id="prof-symbol-pills">
+    <div class="pill active" onclick="setProfSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setProfSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setProfSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+  <div class="analytics-chart">
+    <div class="chart-header"><h3>Volume Profile (with POC)</h3></div>
+    <div id="vprofile-data" style="max-height:400px;overflow-y:auto"></div>
+  </div>
+  <div class="analytics-chart">
+    <div class="chart-header"><h3>TPO Market Profile</h3></div>
+    <div id="tpo-data" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:.72rem;padding:8px"></div>
   </div>
 </div>
 
@@ -341,10 +455,14 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const tabs = ['trade', 'charts', 'leaderboard', 'portfolio', 'achievements'];
+  const tabs = ['trade', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
   const idx = tabs.indexOf(name);
   document.querySelectorAll('.tab-btn')[idx].classList.add('active');
   if (name === 'charts') initCharts();
+  if (name === 'orderflow') initOrderFlow();
+  if (name === 'liquidity') initLiquidity();
+  if (name === 'deriv') initDerivatives();
+  if (name === 'mprofile') initProfile();
   if (name === 'leaderboard') fetchLeaderboard(lbPeriod);
   if (name === 'portfolio') fetchPortfolio();
   if (name === 'achievements') fetchAchievements();
