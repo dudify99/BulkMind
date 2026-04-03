@@ -25,8 +25,8 @@ from config import (
     NEWS_MAX_POSITION_USD, NEWS_MAX_HOLD_MIN, NEWS_MAX_AGE_MIN,
     NEWS_PAPER_MODE, NEWS_LLM_MODEL, CRYPTOPANIC_API_KEY,
     ANTHROPIC_API_KEY, HL_SYMBOL_MAP,
-    X_BEARER_TOKEN, X_SEARCH_QUERIES, X_TRACKED_ACCOUNTS,
-    X_MAX_RESULTS,
+    LUNARCRUSH_API_KEY, LUNARCRUSH_TOPICS, LUNARCRUSH_BASE_URL,
+    SOCIALDATA_API_KEY, SOCIALDATA_QUERIES,
 )
 
 AGENT_NAME = "NewsTrader"
@@ -157,140 +157,174 @@ class NewsTrader:
             print(f"  [NewsTrader] RSS {name} fetch error: {e}")
             return []
 
-    # ── X/Twitter Fetching ─────────────────────────────────────
+    # ── LunarCrush — Free CT Social Posts + News ────────────────
 
-    async def _fetch_x_search(self) -> List[dict]:
-        """Fetch recent tweets matching crypto news search queries via X API v2."""
-        if not X_BEARER_TOKEN:
+    async def _fetch_lunarcrush_posts(self) -> List[dict]:
+        """Fetch social posts (CT tweets) for tracked topics via LunarCrush v4 public API."""
+        if not LUNARCRUSH_API_KEY:
             return []
 
         headers = {
-            "Authorization": f"Bearer {X_BEARER_TOKEN}",
+            "Authorization": f"Bearer {LUNARCRUSH_API_KEY}",
             "User-Agent":    "BulkMind/1.0 NewsTrader",
         }
-        all_tweets: List[dict] = []
+        all_posts: List[dict] = []
 
-        for query in X_SEARCH_QUERIES:
+        for topic in LUNARCRUSH_TOPICS:
             try:
-                params = {
-                    "query":        query,
-                    "max_results":  min(X_MAX_RESULTS, 100),
-                    "tweet.fields": "created_at,author_id,text,public_metrics",
-                    "expansions":   "author_id",
-                    "user.fields":  "username",
-                }
                 async with self.session.get(
-                    "https://api.x.com/2/tweets/search/recent",
-                    headers=headers, params=params,
+                    f"{LUNARCRUSH_BASE_URL}/public/topic/{topic}/posts/v1",
+                    headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status == 429:
-                        print("  [NewsTrader] X API rate limited, backing off")
+                        print("  [NewsTrader] LunarCrush rate limited")
+                        return all_posts
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+
+                    for post in data.get("data", []):
+                        post_id   = str(post.get("id", ""))
+                        text      = post.get("post_title", "") or post.get("title", "")
+                        author    = post.get("creator_display_name", "") or post.get("creator_name", "")
+                        post_url  = post.get("post_link", "") or post.get("url", "")
+                        created   = post.get("post_created", "") or post.get("time", "")
+                        interactions = post.get("interactions_total", 0) or 0
+
+                        if not text:
+                            continue
+                        # Skip low-engagement posts
+                        if interactions < 5:
+                            continue
+
+                        all_posts.append({
+                            "id":           f"lc_{topic}_{post_id}",
+                            "title":        text[:280],
+                            "body":         text,
+                            "source":       "lunarcrush",
+                            "url":          post_url,
+                            "published_at": str(created),
+                            "author":       f"@{author}" if author else "",
+                            "engagement":   interactions,
+                        })
+            except Exception as e:
+                print(f"  [NewsTrader] LunarCrush posts/{topic} error: {e}")
+
+        return all_posts
+
+    async def _fetch_lunarcrush_news(self) -> List[dict]:
+        """Fetch aggregated crypto news for topics via LunarCrush v4 public API."""
+        if not LUNARCRUSH_API_KEY:
+            return []
+
+        headers = {
+            "Authorization": f"Bearer {LUNARCRUSH_API_KEY}",
+            "User-Agent":    "BulkMind/1.0 NewsTrader",
+        }
+        all_news: List[dict] = []
+
+        for topic in LUNARCRUSH_TOPICS:
+            try:
+                async with self.session.get(
+                    f"{LUNARCRUSH_BASE_URL}/public/topic/{topic}/news/v1",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 429:
+                        print("  [NewsTrader] LunarCrush rate limited")
+                        return all_news
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+
+                    for item in data.get("data", []):
+                        news_id = str(item.get("id", ""))
+                        title   = item.get("post_title", "") or item.get("title", "")
+                        body    = item.get("description", "") or title
+                        url     = item.get("post_link", "") or item.get("url", "")
+                        created = item.get("post_created", "") or item.get("time", "")
+
+                        if not title:
+                            continue
+
+                        all_news.append({
+                            "id":           f"lcn_{topic}_{news_id}",
+                            "title":        title[:280],
+                            "body":         body[:500],
+                            "source":       "lunarcrush_news",
+                            "url":          url,
+                            "published_at": str(created),
+                            "author":       "",
+                        })
+            except Exception as e:
+                print(f"  [NewsTrader] LunarCrush news/{topic} error: {e}")
+
+        return all_news
+
+    # ── SocialData.tools — Full Tweet Search (optional) ───────
+
+    async def _fetch_socialdata(self) -> List[dict]:
+        """Fetch tweets via SocialData.tools API (pay-as-you-go, optional)."""
+        if not SOCIALDATA_API_KEY:
+            return []
+
+        headers = {
+            "Authorization": f"Bearer {SOCIALDATA_API_KEY}",
+            "Accept":        "application/json",
+        }
+        all_tweets: List[dict] = []
+
+        for query in SOCIALDATA_QUERIES:
+            try:
+                async with self.session.get(
+                    "https://api.socialdata.tools/twitter/search",
+                    headers=headers,
+                    params={"query": query},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 429:
+                        print("  [NewsTrader] SocialData rate limited")
                         return all_tweets
                     if resp.status != 200:
                         continue
                     data = await resp.json()
 
-                    # Build username lookup from includes
-                    users = {}
-                    for u in data.get("includes", {}).get("users", []):
-                        users[u["id"]] = u.get("username", "")
+                    for tweet in data.get("tweets", []):
+                        tweet_id = str(tweet.get("id_str", "") or tweet.get("id", ""))
+                        text     = tweet.get("full_text", "") or tweet.get("text", "")
+                        user     = tweet.get("user", {})
+                        username = user.get("screen_name", "")
+                        metrics  = tweet.get("public_metrics", {})
+                        likes    = (metrics.get("like_count", 0)
+                                    or tweet.get("favorite_count", 0))
+                        rts      = (metrics.get("retweet_count", 0)
+                                    or tweet.get("retweet_count", 0))
 
-                    for tweet in data.get("data", []):
-                        tweet_id  = tweet.get("id", "")
-                        author_id = tweet.get("author_id", "")
-                        username  = users.get(author_id, "")
-                        text      = tweet.get("text", "")
-                        metrics   = tweet.get("public_metrics", {})
-
-                        # Skip low-engagement tweets (noise filter)
-                        likes = metrics.get("like_count", 0)
-                        rts   = metrics.get("retweet_count", 0)
-                        if likes + rts < 5:
+                        if not text or (likes + rts < 5):
                             continue
 
                         all_tweets.append({
-                            "id":           f"x_{tweet_id}",
+                            "id":           f"sd_{tweet_id}",
                             "title":        text[:280],
                             "body":         text,
-                            "source":       "x",
+                            "source":       "socialdata",
                             "url":          f"https://x.com/{username}/status/{tweet_id}",
                             "published_at": tweet.get("created_at", ""),
-                            "author":       f"@{username}",
+                            "author":       f"@{username}" if username else "",
                             "engagement":   likes + rts,
                         })
             except Exception as e:
-                print(f"  [NewsTrader] X search error: {e}")
+                print(f"  [NewsTrader] SocialData search error: {e}")
 
         return all_tweets
 
-    async def _fetch_x_accounts(self) -> List[dict]:
-        """Fetch recent tweets from tracked high-signal CT accounts."""
-        if not X_BEARER_TOKEN or not X_TRACKED_ACCOUNTS:
-            return []
-
-        headers = {
-            "Authorization": f"Bearer {X_BEARER_TOKEN}",
-            "User-Agent":    "BulkMind/1.0 NewsTrader",
-        }
-
-        # Build a single OR query for all tracked accounts
-        accounts_query = " OR ".join(
-            f"from:{acct}" for acct in X_TRACKED_ACCOUNTS
-        )
-        query = f"({accounts_query}) -is:retweet"
-
-        try:
-            params = {
-                "query":        query,
-                "max_results":  min(X_MAX_RESULTS, 100),
-                "tweet.fields": "created_at,author_id,text,public_metrics",
-                "expansions":   "author_id",
-                "user.fields":  "username",
-            }
-            async with self.session.get(
-                "https://api.x.com/2/tweets/search/recent",
-                headers=headers, params=params,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 429:
-                    print("  [NewsTrader] X API rate limited, backing off")
-                    return []
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-
-                users = {}
-                for u in data.get("includes", {}).get("users", []):
-                    users[u["id"]] = u.get("username", "")
-
-                articles = []
-                for tweet in data.get("data", []):
-                    tweet_id  = tweet.get("id", "")
-                    author_id = tweet.get("author_id", "")
-                    username  = users.get(author_id, "")
-                    text      = tweet.get("text", "")
-
-                    articles.append({
-                        "id":           f"x_{tweet_id}",
-                        "title":        text[:280],
-                        "body":         text,
-                        "source":       "x",
-                        "url":          f"https://x.com/{username}/status/{tweet_id}",
-                        "published_at": tweet.get("created_at", ""),
-                        "author":       f"@{username}",
-                        "engagement":   0,
-                    })
-                return articles
-        except Exception as e:
-            print(f"  [NewsTrader] X accounts fetch error: {e}")
-            return []
-
     async def fetch_news(self) -> List[dict]:
-        """Aggregate + deduplicate news from all sources (X, CryptoPanic, CoinGecko, RSS)."""
+        """Aggregate + deduplicate news from all sources (LunarCrush, SocialData, CryptoPanic, CoinGecko, RSS)."""
         tasks = [
-            self._fetch_x_search(),
-            self._fetch_x_accounts(),
+            self._fetch_lunarcrush_posts(),
+            self._fetch_lunarcrush_news(),
+            self._fetch_socialdata(),
             self._fetch_cryptopanic(),
             self._fetch_coingecko(),
             *[self._fetch_rss(name, url) for name, url in RSS_FEEDS],

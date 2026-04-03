@@ -72,25 +72,20 @@ NEWS_PAPER_MODE         = True         # paper trading default
 NEWS_LLM_MODEL          = "claude-haiku-4-5-20251001"  # fast + cheap for news analysis
 CRYPTOPANIC_API_KEY     = os.getenv("CRYPTOPANIC_API_KEY", "")  # optional, free tier works without
 
-# ── X/Twitter News Settings ──────────────────────────────────
-X_BEARER_TOKEN          = os.getenv("X_BEARER_TOKEN", "")  # X API v2 bearer token
-X_SEARCH_QUERIES        = [                                 # search queries for crypto news
-    "(bitcoin OR btc) (hack OR exploit OR etf OR ban OR sec OR approved OR crash) -is:retweet lang:en",
-    "(ethereum OR eth) (upgrade OR merge OR hack OR exploit OR sec) -is:retweet lang:en",
-    "(solana OR sol) (outage OR hack OR exploit OR upgrade OR tvl) -is:retweet lang:en",
-    "(crypto OR cryptocurrency) (ban OR regulation OR collapse OR bankrupt) -is:retweet lang:en",
+# ── Social/CT News Sources ───────────────────────────────────
+# LunarCrush — free API key from lunarcrush.com/developers (primary CT source)
+LUNARCRUSH_API_KEY      = os.getenv("LUNARCRUSH_API_KEY", "")
+LUNARCRUSH_TOPICS       = ["bitcoin", "ethereum", "solana", "crypto"]  # topics to monitor
+LUNARCRUSH_BASE_URL     = "https://lunarcrush.com/api4"
+
+# SocialData.tools — pay-as-you-go ($0.0002/tweet), optional power-up for full tweet search
+SOCIALDATA_API_KEY      = os.getenv("SOCIALDATA_API_KEY", "")
+SOCIALDATA_QUERIES      = [
+    "(bitcoin OR btc) (hack OR exploit OR etf OR ban OR approved OR crash)",
+    "(ethereum OR eth) (upgrade OR hack OR exploit OR sec)",
+    "(solana OR sol) (outage OR hack OR exploit OR upgrade)",
+    "(crypto) (ban OR regulation OR collapse OR bankrupt)",
 ]
-X_TRACKED_ACCOUNTS      = [            # high-signal CT accounts (user IDs)
-    "tier10k",                          # @tier10k — breaking crypto news
-    "WatcherGuru",                      # @WatcherGuru — major event alerts
-    "whale_alert",                      # @whale_alert — large transactions
-    "DeItaone",                         # @DeItaone — financial breaking news
-    "zaborowski99",                     # @unusual_whales — market alerts
-    "CoinDesk",                         # @CoinDesk
-    "Cointelegraph",                    # @Cointelegraph
-]
-X_MAX_RESULTS           = 20            # tweets per query (10-100)
-X_POLL_INTERVAL_SEC     = 120           # poll X every 2 min (rate limit friendly)
 
 # ── BulkSOL Analytics ────────────────────────────────────────
 BULKSOL_LIVE_CHECK_SEC   = 300        # 5 min — fetch live stats for dashboard
