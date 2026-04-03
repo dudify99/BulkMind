@@ -75,6 +75,18 @@ class Dashboard:
         self.app.router.add_get("/api/hb/market", self._hb_market)
         self.app.router.add_get("/api/hb/candles", self._hb_candles)
         self.app.router.add_get("/api/hb/pnl-history/{wallet}", self._hb_pnl_history)
+        # ── Analytics Routes (MMT-style) ──
+        self.app.router.add_get("/api/hb/orderflow/cvd", self._hb_cvd)
+        self.app.router.add_get("/api/hb/orderflow/delta", self._hb_volume_delta)
+        self.app.router.add_get("/api/hb/orderflow/bubbles", self._hb_large_trades)
+        self.app.router.add_get("/api/hb/orderflow/footprint", self._hb_footprint)
+        self.app.router.add_get("/api/hb/liquidity/heatmap", self._hb_heatmap)
+        self.app.router.add_get("/api/hb/liquidity/depth", self._hb_depth)
+        self.app.router.add_get("/api/hb/derivatives/oi", self._hb_oi)
+        self.app.router.add_get("/api/hb/derivatives/funding", self._hb_funding)
+        self.app.router.add_get("/api/hb/derivatives/liqmap", self._hb_liq_map)
+        self.app.router.add_get("/api/hb/profile/volume", self._hb_volume_profile)
+        self.app.router.add_get("/api/hb/profile/tpo", self._hb_tpo)
         self.app.router.add_get("/ws", self._ws_handler)
         if STATIC_DIR.exists():
             self.app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
@@ -697,6 +709,90 @@ class Dashboard:
             "spread": spreads,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
         })
+
+    # ── Analytics Handlers (MMT-style) ──────────────────────
+
+    async def _hb_cvd(self, request):
+        """Cumulative Volume Delta time series."""
+        from analytics import orderflow
+        symbol = request.query.get("symbol", "BTC-USD")
+        limit = int(request.query.get("limit", "500"))
+        return web.json_response(orderflow.get_cvd(symbol, limit))
+
+    async def _hb_volume_delta(self, request):
+        """Volume delta per candle (buy/sell volume + delta + counts)."""
+        from analytics import orderflow
+        symbol = request.query.get("symbol", "BTC-USD")
+        limit = int(request.query.get("limit", "100"))
+        return web.json_response(orderflow.get_volume_delta(symbol, limit))
+
+    async def _hb_large_trades(self, request):
+        """Large trades / volume bubbles (>= $5k)."""
+        from analytics import orderflow
+        symbol = request.query.get("symbol", "BTC-USD")
+        limit = int(request.query.get("limit", "100"))
+        return web.json_response(orderflow.get_large_trades(symbol, limit))
+
+    async def _hb_footprint(self, request):
+        """Footprint chart data — volume at each price level per candle."""
+        from analytics import orderflow
+        symbol = request.query.get("symbol", "BTC-USD")
+        candle = request.query.get("candle", None)
+        candle_ts = int(candle) if candle else None
+        return web.json_response(orderflow.get_footprint(symbol, candle_ts))
+
+    async def _hb_heatmap(self, request):
+        """Orderbook heatmap — bid/ask depth snapshots over time."""
+        from analytics import liquidity
+        symbol = request.query.get("symbol", "BTC-USD")
+        limit = int(request.query.get("limit", "100"))
+        return web.json_response(liquidity.get_heatmap(symbol, limit))
+
+    async def _hb_depth(self, request):
+        """Orderbook depth chart — cumulative bid/ask levels."""
+        from analytics import liquidity
+        symbol = request.query.get("symbol", "BTC-USD")
+        return web.json_response(liquidity.get_depth(symbol))
+
+    async def _hb_oi(self, request):
+        """Open Interest time series."""
+        from analytics import derivatives
+        symbol = request.query.get("symbol", "BTC-USD")
+        limit = int(request.query.get("limit", "200"))
+        return web.json_response(derivatives.get_oi_series(symbol, limit))
+
+    async def _hb_funding(self, request):
+        """Funding rate comparison (Bulk vs Hyperliquid) time series."""
+        from analytics import derivatives
+        symbol = request.query.get("symbol", "BTC-USD")
+        limit = int(request.query.get("limit", "200"))
+        return web.json_response(derivatives.get_funding_series(symbol, limit))
+
+    async def _hb_liq_map(self, request):
+        """Liquidation map — actual clusters + estimated levels."""
+        from analytics import derivatives
+        symbol = request.query.get("symbol", "BTC-USD")
+        clusters = derivatives.get_liq_map(symbol)
+        # Also get current price for estimated levels
+        price = await self._get_price(symbol, "bulk")
+        estimated = derivatives.estimate_liq_levels(symbol, price)
+        return web.json_response({
+            "clusters": clusters,
+            "estimated_levels": estimated,
+            "current_price": price,
+        })
+
+    async def _hb_volume_profile(self, request):
+        """Volume Profile — volume at price with POC."""
+        from analytics import profile
+        symbol = request.query.get("symbol", "BTC-USD")
+        return web.json_response(profile.get_volume_profile(symbol))
+
+    async def _hb_tpo(self, request):
+        """TPO (Time Price Opportunity) — market profile letters."""
+        from analytics import profile
+        symbol = request.query.get("symbol", "BTC-USD")
+        return web.json_response(profile.get_tpo(symbol))
 
     async def _hb_candles(self, request):
         """Fetch OHLCV candles from Bulk and/or Hyperliquid for charting."""

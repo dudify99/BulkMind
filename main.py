@@ -100,6 +100,7 @@ async def main():
             bot.run(),              # BreakoutBot: TA trading agent
             news_trader.run(),      # NewsTrader: LLM news agent
             hb_pnl_loop(reporter, dashboard),  # HyperBulk: live PnL broadcasts
+            hb_analytics_loop(client, hl_client),  # HyperBulk: orderbook + OI + funding polling
             evoskill_schedule(),    # Periodic EvoSkill improvement
         )
 
@@ -131,6 +132,37 @@ async def hb_pnl_loop(reporter, dashboard):
         except Exception:
             pass
         await asyncio.sleep(3)
+
+
+async def hb_analytics_loop(bulk_client, hl_client):
+    """Poll orderbooks, OI, and funding rates every 10s for analytics engine."""
+    from analytics import liquidity, derivatives
+    from config import WATCHED_SYMBOLS
+    while True:
+        try:
+            for symbol in WATCHED_SYMBOLS:
+                # Bulk orderbook
+                ob = await bulk_client.get_orderbook(symbol, nlevels=30)
+                if ob:
+                    bids = [(l[0], l[1]) for l in ob.get("bids", ob.get("levels", {}).get("bids", []))] if isinstance(ob, dict) else []
+                    asks = [(l[0], l[1]) for l in ob.get("asks", ob.get("levels", {}).get("asks", []))] if isinstance(ob, dict) else []
+                    if bids or asks:
+                        liquidity.record_snapshot(symbol, bids, asks)
+
+                # Bulk ticker for OI + funding
+                ticker = await bulk_client.get_ticker(symbol)
+                if ticker:
+                    oi = float(ticker.get("openInterest", 0))
+                    if oi:
+                        derivatives.record_oi(symbol, oi)
+                    bulk_funding = float(ticker.get("fundingRate", 0))
+
+                    # HL funding via allMids (already available)
+                    hl_funding = 0.0
+                    derivatives.record_funding(symbol, bulk_funding, hl_funding)
+        except Exception as e:
+            print(f"Analytics loop error: {e}")
+        await asyncio.sleep(10)
 
 
 async def evoskill_schedule():

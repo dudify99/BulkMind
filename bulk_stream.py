@@ -102,8 +102,9 @@ class BulkStream:
                 raw_data=json.dumps(trade)
             )
 
-            # Broadcast to all WebSocket clients (drives HyperBulk globe + feed)
-            await self.reporter.broadcast_trade({
+            # Feed analytics engines
+            from analytics import orderflow, profile, derivatives
+            trade_event = {
                 "symbol": symbol,
                 "side": side,
                 "price": price,
@@ -112,7 +113,12 @@ class BulkStream:
                 "exchange": "bulk",
                 "reason": reason,
                 "ts": datetime.utcnow().isoformat(),
-            })
+            }
+            orderflow.process_trade(trade_event)
+            profile.process_trade(trade_event)
+
+            # Broadcast to all WebSocket clients (drives HyperBulk globe + feed)
+            await self.reporter.broadcast_trade(trade_event)
 
             # Discover wallets
             if maker:
@@ -130,6 +136,7 @@ class BulkStream:
                     size=size, value_usd=value_usd,
                     wallet=liq_wallet, raw_data=json.dumps(trade)
                 )
+                derivatives.record_liquidation(symbol, price, value_usd)
 
                 if value_usd >= LIQUIDATION_ALERT_THRESHOLD_USD:
                     await self.reporter.alert(

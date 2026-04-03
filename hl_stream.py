@@ -130,8 +130,9 @@ class HLStream:
             symbol = hl_reverse.get(coin, f"{coin}-USD")
             value_usd = round(price * size, 2)
 
-            # Broadcast to all dashboard WebSocket clients
-            await self.reporter.broadcast_trade({
+            # Feed analytics engines
+            from analytics import orderflow, profile
+            trade_event = {
                 "symbol": symbol,
                 "side": side,
                 "price": price,
@@ -140,4 +141,9 @@ class HLStream:
                 "exchange": "hyperliquid",
                 "reason": "normal",
                 "ts": datetime.utcnow().isoformat(),
-            })
+            }
+            orderflow.process_trade(trade_event)
+            profile.process_trade(trade_event)
+
+            # Broadcast to all dashboard WebSocket clients
+            await self.reporter.broadcast_trade(trade_event)
