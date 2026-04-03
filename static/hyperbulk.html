@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>HyperBulk - Competitive Crypto Trading</title>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0a0a0f;--surface:#12121a;--accent:#00ff88;--purple:#7c4dff;--red:#ff4444;--text:#e0e0e0;--text2:#888;--border:#1e1e2e;--radius:10px}
@@ -141,6 +142,14 @@ a{color:var(--accent);text-decoration:none}
 .ws-status.connected{color:var(--accent);background:rgba(0,255,136,.1)}
 .ws-status.disconnected{color:var(--red);background:rgba(255,68,68,.1)}
 
+/* Charts */
+.chart-container{width:100%;height:350px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);margin-bottom:14px;background:var(--surface)}
+.chart-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)}
+.chart-header h3{font-size:.85rem;font-weight:700}
+.chart-toggle{display:flex;gap:4px}
+.chart-toggle button{background:var(--bg);border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.7rem;font-weight:600}
+.chart-toggle button.active{background:var(--accent);color:#000;border-color:var(--accent)}
+
 /* Empty state */
 .empty{text-align:center;padding:40px 20px;color:var(--text2);font-size:.85rem}
 
@@ -170,6 +179,7 @@ a{color:var(--accent);text-decoration:none}
 <!-- Tab Bar -->
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchTab('trade')">Trade</button>
+  <button class="tab-btn" onclick="switchTab('charts')">Charts</button>
   <button class="tab-btn" onclick="switchTab('leaderboard')">Leaderboard</button>
   <button class="tab-btn" onclick="switchTab('portfolio')">Portfolio</button>
   <button class="tab-btn" onclick="switchTab('achievements')">Achievements</button>
@@ -210,6 +220,34 @@ a{color:var(--accent);text-decoration:none}
   <div id="open-positions"><div class="empty">No open positions</div></div>
   <div class="section-title">Live Trade Feed</div>
   <div class="live-feed" id="live-feed"><div class="empty">Connecting to live feed...</div></div>
+</div>
+
+<!-- Charts Tab -->
+<div class="tab-content" id="tab-charts">
+  <!-- Symbol + Exchange selectors -->
+  <div class="pills" id="chart-symbol-pills">
+    <div class="pill active" onclick="setChartSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setChartSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setChartSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+  <!-- Price Chart -->
+  <div class="chart-container">
+    <div class="chart-header">
+      <h3 id="chart-title">BTC-USD Price</h3>
+      <div class="chart-toggle" id="chart-ex-toggle">
+        <button class="active" onclick="setChartExchange('bulk',this)">Bulk</button>
+        <button onclick="setChartExchange('hyperliquid',this)">Hyperliquid</button>
+      </div>
+    </div>
+    <div id="price-chart" style="height:300px"></div>
+  </div>
+  <!-- PnL Equity Curve -->
+  <div class="chart-container">
+    <div class="chart-header">
+      <h3>PnL Equity Curve</h3>
+    </div>
+    <div id="pnl-chart" style="height:300px"></div>
+  </div>
 </div>
 
 <!-- Leaderboard Tab -->
@@ -303,9 +341,10 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const tabs = ['trade', 'leaderboard', 'portfolio', 'achievements'];
+  const tabs = ['trade', 'charts', 'leaderboard', 'portfolio', 'achievements'];
   const idx = tabs.indexOf(name);
   document.querySelectorAll('.tab-btn')[idx].classList.add('active');
+  if (name === 'charts') initCharts();
   if (name === 'leaderboard') fetchLeaderboard(lbPeriod);
   if (name === 'portfolio') fetchPortfolio();
   if (name === 'achievements') fetchAchievements();
@@ -693,6 +732,11 @@ function handleLiveTrade(trade) {
     addTradeToGlobe(trade.side === 'buy' || trade.side === 'BUY');
   }
 
+  // 1b. Update chart with live trade
+  if (typeof updateChartWithTrade === 'function') {
+    updateChartWithTrade(trade);
+  }
+
   // 2. Update price display if symbol matches
   if (trade.symbol === symbol) {
     const p = trade.price;
@@ -722,6 +766,199 @@ function handleLiveTrade(trade) {
   while (feed.children.length > MAX_FEED_ITEMS) {
     feed.removeChild(feed.lastChild);
   }
+}
+
+// --- Charts (TradingView Lightweight Charts) ---
+let priceChart = null, pnlChart = null;
+let candleSeries = null, volumeSeries = null, pnlSeries = null, pnlMarkers = [];
+let chartSymbol = 'BTC-USD', chartExchange = 'bulk';
+let chartsInitialized = false;
+
+function setChartSymbol(s, el) {
+  chartSymbol = s;
+  el.parentElement.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('chart-title').textContent = s + ' Price';
+  fetchCandles();
+}
+
+function setChartExchange(ex, el) {
+  chartExchange = ex;
+  el.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  fetchCandles();
+}
+
+function initCharts() {
+  if (chartsInitialized) { fetchCandles(); fetchPnlHistory(); return; }
+  chartsInitialized = true;
+
+  const chartColors = {
+    background: '#12121a',
+    textColor: '#888',
+    gridColor: '#1e1e2e',
+  };
+
+  // Price chart
+  const priceContainer = document.getElementById('price-chart');
+  priceChart = LightweightCharts.createChart(priceContainer, {
+    width: priceContainer.clientWidth,
+    height: 300,
+    layout: { background: { type: 'solid', color: chartColors.background }, textColor: chartColors.textColor },
+    grid: { vertLines: { color: chartColors.gridColor }, horzLines: { color: chartColors.gridColor } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: chartColors.gridColor },
+    timeScale: { borderColor: chartColors.gridColor, timeVisible: true, secondsVisible: false },
+  });
+
+  candleSeries = priceChart.addCandlestickSeries({
+    upColor: '#00ff88', downColor: '#ff4444',
+    borderUpColor: '#00ff88', borderDownColor: '#ff4444',
+    wickUpColor: '#00ff88', wickDownColor: '#ff4444',
+  });
+
+  volumeSeries = priceChart.addHistogramSeries({
+    color: '#26a69a44',
+    priceFormat: { type: 'volume' },
+    priceScaleId: '',
+  });
+  volumeSeries.priceScale().applyOptions({
+    scaleMargins: { top: 0.8, bottom: 0 },
+  });
+
+  // PnL chart
+  const pnlContainer = document.getElementById('pnl-chart');
+  pnlChart = LightweightCharts.createChart(pnlContainer, {
+    width: pnlContainer.clientWidth,
+    height: 300,
+    layout: { background: { type: 'solid', color: chartColors.background }, textColor: chartColors.textColor },
+    grid: { vertLines: { color: chartColors.gridColor }, horzLines: { color: chartColors.gridColor } },
+    rightPriceScale: { borderColor: chartColors.gridColor },
+    timeScale: { borderColor: chartColors.gridColor, timeVisible: true },
+  });
+
+  pnlSeries = pnlChart.addAreaSeries({
+    topColor: 'rgba(0,255,136,0.3)',
+    bottomColor: 'rgba(0,255,136,0.02)',
+    lineColor: '#00ff88',
+    lineWidth: 2,
+  });
+
+  // Responsive
+  const resizeCharts = () => {
+    priceChart.applyOptions({ width: priceContainer.clientWidth });
+    pnlChart.applyOptions({ width: pnlContainer.clientWidth });
+  };
+  window.addEventListener('resize', resizeCharts);
+
+  fetchCandles();
+  fetchPnlHistory();
+}
+
+async function fetchCandles() {
+  if (!priceChart) return;
+  try {
+    const url = API + '/api/hb/candles?symbol=' + chartSymbol + '&exchange=' + chartExchange + '&interval=15m&limit=200';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    if (data.length) {
+      candleSeries.setData(data);
+      volumeSeries.setData(data.map(c => ({
+        time: c.time,
+        value: c.volume,
+        color: c.close >= c.open ? 'rgba(0,255,136,0.2)' : 'rgba(255,68,68,0.2)',
+      })));
+      priceChart.timeScale().fitContent();
+    }
+  } catch (e) {
+    // Load demo candles
+    loadDemoCandles();
+  }
+}
+
+function loadDemoCandles() {
+  const base = chartSymbol === 'BTC-USD' ? 69000 : chartSymbol === 'ETH-USD' ? 3500 : 185;
+  const now = Math.floor(Date.now() / 1000);
+  const candles = [];
+  let price = base;
+  for (let i = 200; i >= 0; i--) {
+    const t = now - i * 900;
+    const change = (Math.random() - 0.48) * base * 0.003;
+    const o = price;
+    const c = price + change;
+    const h = Math.max(o, c) + Math.random() * base * 0.001;
+    const l = Math.min(o, c) - Math.random() * base * 0.001;
+    const v = Math.random() * 100 + 10;
+    candles.push({ time: t, open: +o.toFixed(2), high: +h.toFixed(2), low: +l.toFixed(2), close: +c.toFixed(2), volume: +v.toFixed(2) });
+    price = c;
+  }
+  candleSeries.setData(candles);
+  volumeSeries.setData(candles.map(c => ({
+    time: c.time, value: c.volume,
+    color: c.close >= c.open ? 'rgba(0,255,136,0.2)' : 'rgba(255,68,68,0.2)',
+  })));
+  priceChart.timeScale().fitContent();
+}
+
+async function fetchPnlHistory() {
+  if (!pnlChart || !wallet) { loadDemoPnl(); return; }
+  try {
+    const res = await fetch(API + '/api/hb/pnl-history/' + wallet);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    if (data.equity_curve && data.equity_curve.length) {
+      pnlSeries.setData(data.equity_curve);
+      // Color based on final PnL
+      const finalPnl = data.total_pnl || 0;
+      pnlSeries.applyOptions({
+        topColor: finalPnl >= 0 ? 'rgba(0,255,136,0.3)' : 'rgba(255,68,68,0.3)',
+        bottomColor: finalPnl >= 0 ? 'rgba(0,255,136,0.02)' : 'rgba(255,68,68,0.02)',
+        lineColor: finalPnl >= 0 ? '#00ff88' : '#ff4444',
+      });
+      pnlChart.timeScale().fitContent();
+    } else {
+      loadDemoPnl();
+    }
+  } catch (e) {
+    loadDemoPnl();
+  }
+}
+
+function loadDemoPnl() {
+  const now = Math.floor(Date.now() / 1000);
+  const data = [];
+  let pnl = 0;
+  for (let i = 50; i >= 0; i--) {
+    const t = now - i * 3600;
+    pnl += (Math.random() - 0.45) * 50;
+    data.push({ time: t, value: +pnl.toFixed(2) });
+  }
+  pnlSeries.setData(data);
+  const finalPnl = data[data.length - 1].value;
+  pnlSeries.applyOptions({
+    topColor: finalPnl >= 0 ? 'rgba(0,255,136,0.3)' : 'rgba(255,68,68,0.3)',
+    bottomColor: finalPnl >= 0 ? 'rgba(0,255,136,0.02)' : 'rgba(255,68,68,0.02)',
+    lineColor: finalPnl >= 0 ? '#00ff88' : '#ff4444',
+  });
+  pnlChart.timeScale().fitContent();
+}
+
+// Update price chart with live trade data from WebSocket
+function updateChartWithTrade(trade) {
+  if (!candleSeries || trade.symbol !== chartSymbol) return;
+  const ex = trade.exchange || 'bulk';
+  if (ex !== chartExchange) return;
+  // Update the last candle's close price
+  const now = Math.floor(Date.now() / 1000);
+  const candleTime = now - (now % 900); // Round to 15m candle
+  candleSeries.update({
+    time: candleTime,
+    open: trade.price,
+    high: trade.price,
+    low: trade.price,
+    close: trade.price,
+  });
 }
 
 // --- Live PnL Updates ---

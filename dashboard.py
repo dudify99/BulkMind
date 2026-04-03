@@ -73,6 +73,8 @@ class Dashboard:
         self.app.router.add_get("/api/hb/trades/open", self._hb_open_trades)
         self.app.router.add_get("/api/hb/achievements/{wallet}", self._hb_achievements)
         self.app.router.add_get("/api/hb/market", self._hb_market)
+        self.app.router.add_get("/api/hb/candles", self._hb_candles)
+        self.app.router.add_get("/api/hb/pnl-history/{wallet}", self._hb_pnl_history)
         self.app.router.add_get("/ws", self._ws_handler)
         if STATIC_DIR.exists():
             self.app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
@@ -694,6 +696,118 @@ class Dashboard:
             "hyperliquid": hl_prices,
             "spread": spreads,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
+        })
+
+    async def _hb_candles(self, request):
+        """Fetch OHLCV candles from Bulk and/or Hyperliquid for charting."""
+        symbol = request.query.get("symbol", "BTC-USD")
+        exchange = request.query.get("exchange", "bulk")
+        interval = request.query.get("interval", "15m")
+        limit = int(request.query.get("limit", "100"))
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                if exchange == "hyperliquid":
+                    # HL candles via POST /info {type: candleSnapshot}
+                    from config import HL_SYMBOL_MAP
+                    hl_coin = HL_SYMBOL_MAP.get(symbol, symbol.replace("-USD", ""))
+                    url = f"{HL_API_BASE}/info"
+                    async with session.post(url, json={
+                        "type": "candleSnapshot",
+                        "coin": hl_coin,
+                        "interval": interval,
+                        "startTime": 0,
+                    }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status != 200:
+                            return web.json_response({"error": f"HL returned {resp.status}"}, status=502)
+                        raw = await resp.json(content_type=None)
+                        if not isinstance(raw, list):
+                            return web.json_response({"error": "Invalid HL response"}, status=502)
+                        # Format for lightweight-charts: {time, open, high, low, close, volume}
+                        candles = []
+                        for c in raw[-limit:]:
+                            t = c.get("t") or c.get("T", 0)
+                            # HL timestamps are in ms
+                            ts = int(t) // 1000 if int(t) > 1e12 else int(t)
+                            candles.append({
+                                "time": ts,
+                                "open": float(c.get("o", 0)),
+                                "high": float(c.get("h", 0)),
+                                "low": float(c.get("l", 0)),
+                                "close": float(c.get("c", 0)),
+                                "volume": float(c.get("v", 0)),
+                            })
+                        return web.json_response(candles)
+                else:
+                    # Bulk candles via GET /klines
+                    url = f"{BULK_API_BASE}/klines"
+                    params = {"symbol": symbol, "interval": interval}
+                    async with session.get(url, params=params,
+                                           timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status != 200:
+                            return web.json_response({"error": f"Bulk returned {resp.status}"}, status=502)
+                        raw = await resp.json(content_type=None)
+                        data = raw if isinstance(raw, list) else raw.get("data", [])
+                        candles = []
+                        for c in data[-limit:]:
+                            t = c.get("t") or c.get("timestamp", 0)
+                            ts = int(t) // 1000 if isinstance(t, (int, float)) and t > 1e12 else int(t) if isinstance(t, (int, float)) else 0
+                            candles.append({
+                                "time": ts,
+                                "open": float(c.get("o") or c.get("open", 0)),
+                                "high": float(c.get("h") or c.get("high", 0)),
+                                "low": float(c.get("l") or c.get("low", 0)),
+                                "close": float(c.get("c") or c.get("close", 0)),
+                                "volume": float(c.get("v") or c.get("volume", 0)),
+                            })
+                        return web.json_response(candles)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_pnl_history(self, request):
+        """Get cumulative PnL history for a user (equity curve data)."""
+        wallet = request.match_info["wallet"]
+        user = hb_get_user(wallet)
+        if not user:
+            return web.json_response({"error": "User not found"}, status=404)
+
+        conn = get_conn()
+        rows = conn.execute(
+            """SELECT closed_at as time, pnl_usd, symbol, side, exchange
+               FROM hb_trades
+               WHERE user_id=? AND status != 'OPEN' AND closed_at IS NOT NULL
+               ORDER BY closed_at ASC""",
+            (user["id"],)
+        ).fetchall()
+        conn.close()
+
+        # Build cumulative PnL series
+        cumulative = 0.0
+        series = []
+        trades = []
+        for r in rows:
+            d = dict(r)
+            cumulative += (d["pnl_usd"] or 0)
+            time_str = d["time"] or ""
+            # Convert ISO timestamp to unix seconds
+            try:
+                from datetime import datetime as dt
+                ts = int(dt.fromisoformat(time_str).timestamp())
+            except Exception:
+                ts = 0
+            series.append({"time": ts, "value": round(cumulative, 2)})
+            trades.append({
+                "time": ts,
+                "pnl": round(d["pnl_usd"] or 0, 2),
+                "symbol": d["symbol"],
+                "side": d["side"],
+                "exchange": d["exchange"],
+            })
+
+        return web.json_response({
+            "equity_curve": series,
+            "trades": trades,
+            "total_pnl": round(cumulative, 2),
         })
 
     async def _api_latency(self, request):
