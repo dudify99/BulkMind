@@ -5,7 +5,8 @@ Stores: latency logs, trade history, issues, agent performance
 
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional
 from pathlib import Path
 from config import DB_PATH
 
@@ -236,6 +237,73 @@ def init_db():
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_news_events_ts ON news_events(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_news_events_traded ON news_events(traded)")
+
+    # ── HyperBulk Tables ─────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS hb_users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            wallet      TEXT NOT NULL UNIQUE,
+            username    TEXT UNIQUE,
+            avatar_url  TEXT,
+            xp          INTEGER DEFAULT 0,
+            level       INTEGER DEFAULT 1,
+            league      TEXT DEFAULT 'bronze',
+            created_at  TEXT NOT NULL,
+            last_active TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS hb_trades (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            exchange    TEXT NOT NULL,
+            symbol      TEXT NOT NULL,
+            side        TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            exit_price  REAL,
+            size        REAL NOT NULL,
+            pnl_usd     REAL,
+            pnl_pct     REAL,
+            status      TEXT DEFAULT 'OPEN',
+            order_id    TEXT,
+            opened_at   TEXT NOT NULL,
+            closed_at   TEXT,
+            FOREIGN KEY (user_id) REFERENCES hb_users(id)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS hb_achievements (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            achievement TEXT NOT NULL,
+            earned_at   TEXT NOT NULL,
+            UNIQUE(user_id, achievement)
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS hb_daily_stats (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL,
+            date            TEXT NOT NULL,
+            trades          INTEGER DEFAULT 0,
+            wins            INTEGER DEFAULT 0,
+            losses          INTEGER DEFAULT 0,
+            pnl_usd         REAL DEFAULT 0,
+            best_trade_pnl  REAL DEFAULT 0,
+            streak          INTEGER DEFAULT 0,
+            UNIQUE(user_id, date)
+        )
+    """)
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hb_trades_user ON hb_trades(user_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hb_trades_exchange ON hb_trades(exchange)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hb_trades_status ON hb_trades(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hb_daily_date ON hb_daily_stats(date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hb_users_league ON hb_users(league)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hb_users_xp ON hb_users(xp DESC)")
 
     # ── Indexes ──────────────────────────────────────────────
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_ts ON observed_trades(ts)")
@@ -838,6 +906,265 @@ def cleanup_old_observed_trades(days: int = 7):
     )
     conn.commit()
     conn.close()
+
+
+# ── HyperBulk Helpers ────────────────────────────────────────
+
+def hb_register_user(wallet: str, username: str = None) -> int:
+    """Register a new HyperBulk user. Returns the user id."""
+    conn = get_conn()
+    now = datetime.utcnow().isoformat()
+    conn.execute(
+        """INSERT OR IGNORE INTO hb_users (wallet, username, created_at, last_active)
+           VALUES (?,?,?,?)""",
+        (wallet, username, now, now)
+    )
+    conn.commit()
+    row = conn.execute("SELECT id FROM hb_users WHERE wallet=?", (wallet,)).fetchone()
+    conn.close()
+    return row["id"]
+
+
+def hb_get_user(wallet: str) -> Optional[dict]:
+    """Look up a HyperBulk user by wallet address."""
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM hb_users WHERE wallet=?", (wallet,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def hb_get_user_by_id(user_id: int) -> Optional[dict]:
+    """Look up a HyperBulk user by id."""
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM hb_users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def hb_log_trade(user_id: int, exchange: str, symbol: str, side: str,
+                 entry_price: float, size: float, order_id: str = None) -> int:
+    """Open a new HyperBulk trade. Returns the trade id."""
+    conn = get_conn()
+    now = datetime.utcnow().isoformat()
+    cur = conn.execute(
+        """INSERT INTO hb_trades
+           (user_id, exchange, symbol, side, entry_price, size, order_id, opened_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (user_id, exchange, symbol, side, entry_price, size, order_id, now)
+    )
+    trade_id = cur.lastrowid
+    # Update last_active
+    conn.execute("UPDATE hb_users SET last_active=? WHERE id=?", (now, user_id))
+    conn.commit()
+    conn.close()
+    return trade_id
+
+
+def hb_close_trade(trade_id: int, exit_price: float) -> dict:
+    """Close a HyperBulk trade, compute PnL, update daily stats and XP."""
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM hb_trades WHERE id=?", (trade_id,)).fetchone()
+    if not row:
+        conn.close()
+        return {}
+
+    side = row["side"]
+    entry = row["entry_price"]
+    size = row["size"]
+    user_id = row["user_id"]
+
+    if side == "BUY":
+        pnl_pct = (exit_price - entry) / entry * 100
+    else:
+        pnl_pct = (entry - exit_price) / entry * 100
+
+    pnl_usd = pnl_pct / 100 * entry * size
+    status = "WIN" if pnl_usd > 0 else "LOSS"
+    now = datetime.utcnow().isoformat()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+
+    # Update the trade
+    conn.execute(
+        """UPDATE hb_trades SET exit_price=?, pnl_usd=?, pnl_pct=?, status=?, closed_at=?
+           WHERE id=?""",
+        (exit_price, round(pnl_usd, 2), round(pnl_pct, 2), status, now, trade_id)
+    )
+
+    # Upsert daily stats
+    conn.execute(
+        """INSERT INTO hb_daily_stats (user_id, date, trades, wins, losses, pnl_usd, best_trade_pnl, streak)
+           VALUES (?,?,1,?,?,?,?,?)
+           ON CONFLICT(user_id, date) DO UPDATE SET
+               trades = trades + 1,
+               wins = wins + ?,
+               losses = losses + ?,
+               pnl_usd = pnl_usd + ?,
+               best_trade_pnl = MAX(best_trade_pnl, ?),
+               streak = CASE WHEN ? = 'WIN' THEN streak + 1 ELSE 0 END""",
+        (
+            user_id, today,
+            1 if status == "WIN" else 0,
+            1 if status == "LOSS" else 0,
+            round(pnl_usd, 2),
+            round(pnl_usd, 2) if pnl_usd > 0 else 0,
+            1 if status == "WIN" else 0,
+            # ON CONFLICT params
+            1 if status == "WIN" else 0,
+            1 if status == "LOSS" else 0,
+            round(pnl_usd, 2),
+            round(pnl_usd, 2),
+            status,
+        )
+    )
+
+    # Award XP: +10 per trade, +25 bonus for a win
+    xp_gain = 10 + (25 if status == "WIN" else 0)
+    conn.execute(
+        "UPDATE hb_users SET xp = xp + ?, last_active=? WHERE id=?",
+        (xp_gain, now, user_id)
+    )
+
+    conn.commit()
+    conn.close()
+    return {"pnl_usd": round(pnl_usd, 2), "status": status}
+
+
+def hb_get_leaderboard(period: str = "daily", limit: int = 50) -> list:
+    """Get HyperBulk leaderboard. period: daily | weekly | alltime"""
+    conn = get_conn()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+
+    if period == "daily":
+        rows = conn.execute(
+            """SELECT u.username, u.wallet, u.league, u.xp,
+                      ds.pnl_usd, ds.wins, ds.losses, ds.trades
+               FROM hb_daily_stats ds
+               JOIN hb_users u ON ds.user_id = u.id
+               WHERE ds.date = ?
+               ORDER BY ds.pnl_usd DESC LIMIT ?""",
+            (today, limit)
+        ).fetchall()
+    elif period == "weekly":
+        week_ago = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT u.username, u.wallet, u.league, u.xp,
+                      SUM(ds.pnl_usd) as pnl_usd,
+                      SUM(ds.wins) as wins,
+                      SUM(ds.losses) as losses,
+                      SUM(ds.trades) as trades
+               FROM hb_daily_stats ds
+               JOIN hb_users u ON ds.user_id = u.id
+               WHERE ds.date >= ?
+               GROUP BY ds.user_id
+               ORDER BY pnl_usd DESC LIMIT ?""",
+            (week_ago, limit)
+        ).fetchall()
+    else:  # alltime
+        rows = conn.execute(
+            """SELECT u.username, u.wallet, u.league, u.xp,
+                      SUM(t.pnl_usd) as pnl_usd,
+                      SUM(CASE WHEN t.status='WIN' THEN 1 ELSE 0 END) as wins,
+                      SUM(CASE WHEN t.status='LOSS' THEN 1 ELSE 0 END) as losses,
+                      COUNT(*) as trades
+               FROM hb_trades t
+               JOIN hb_users u ON t.user_id = u.id
+               WHERE t.status != 'OPEN'
+               GROUP BY t.user_id
+               ORDER BY pnl_usd DESC LIMIT ?""",
+            (limit,)
+        ).fetchall()
+
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def hb_get_user_stats(user_id: int) -> dict:
+    """Aggregate stats for a HyperBulk user."""
+    conn = get_conn()
+
+    row = conn.execute(
+        """SELECT
+            COUNT(*) as total_trades,
+            SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN status='LOSS' THEN 1 ELSE 0 END) as losses,
+            SUM(COALESCE(pnl_usd, 0)) as total_pnl,
+            MAX(pnl_usd) as best_trade
+           FROM hb_trades WHERE user_id=? AND status != 'OPEN'""",
+        (user_id,)
+    ).fetchone()
+
+    stats = dict(row) if row else {}
+    total = stats.get("total_trades") or 0
+    wins = stats.get("wins") or 0
+    stats["win_rate"] = round(wins / total * 100, 1) if total > 0 else 0.0
+
+    # Current win streak from most recent trades
+    recent = conn.execute(
+        """SELECT status FROM hb_trades
+           WHERE user_id=? AND status != 'OPEN'
+           ORDER BY closed_at DESC""",
+        (user_id,)
+    ).fetchall()
+    streak = 0
+    for r in recent:
+        if r["status"] == "WIN":
+            streak += 1
+        else:
+            break
+    stats["current_streak"] = streak
+
+    # User profile fields
+    user = conn.execute(
+        "SELECT xp, level, league FROM hb_users WHERE id=?", (user_id,)
+    ).fetchone()
+    if user:
+        stats["xp"] = user["xp"]
+        stats["level"] = user["level"]
+        stats["league"] = user["league"]
+
+    conn.close()
+    return stats
+
+
+def hb_award_achievement(user_id: int, achievement: str) -> bool:
+    """Award an achievement. Returns True if newly awarded, False if already had it."""
+    conn = get_conn()
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO hb_achievements (user_id, achievement, earned_at)
+           VALUES (?,?,?)""",
+        (user_id, achievement, datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    newly_awarded = cur.rowcount > 0
+    conn.close()
+    return newly_awarded
+
+
+def hb_get_achievements(user_id: int) -> list:
+    """Get all achievements for a user."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM hb_achievements WHERE user_id=? ORDER BY earned_at DESC",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def hb_get_open_trades(user_id: int = None) -> list:
+    """Get open HyperBulk trades. If user_id is None, return all open trades."""
+    conn = get_conn()
+    if user_id:
+        rows = conn.execute(
+            "SELECT * FROM hb_trades WHERE user_id=? AND status='OPEN' ORDER BY opened_at DESC",
+            (user_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM hb_trades WHERE status='OPEN' ORDER BY opened_at DESC"
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ── NewsTrader Helpers ────────────────────────────────────────

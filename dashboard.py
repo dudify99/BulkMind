@@ -12,10 +12,13 @@ from db import (
     get_conn, get_open_trades, get_agent_stats, get_top_traders,
     search_wallets, get_wallet_profile, get_leaderboard, get_analytics,
     get_whales, get_liquidation_stats, get_recent_liquidations,
-    get_exchange_summary, get_observed_trades
+    get_exchange_summary, get_observed_trades,
+    hb_register_user, hb_get_user, hb_get_user_stats, hb_log_trade,
+    hb_close_trade, hb_get_leaderboard, hb_get_open_trades,
+    hb_get_achievements, hb_award_achievement
 )
 from reporter import Reporter
-from config import DASHBOARD_HOST, DASHBOARD_PORT, BREAKOUT_PAPER_MODE, BULK_API_BASE
+from config import DASHBOARD_HOST, DASHBOARD_PORT, BREAKOUT_PAPER_MODE, BULK_API_BASE, HL_API_BASE
 from pathlib import Path
 
 
@@ -57,6 +60,16 @@ class Dashboard:
         self.app.router.add_get("/api/bulksol/history", self._api_bulksol_history)
         self.app.router.add_get("/api/bulksol/deployments", self._api_bulksol_deployments)
         self.app.router.add_get("/api/bulksol/validators", self._api_bulksol_validators)
+        # ── HyperBulk Routes ──
+        self.app.router.add_get("/hyperbulk", self._serve_hyperbulk)
+        self.app.router.add_post("/api/hb/register", self._hb_register)
+        self.app.router.add_get("/api/hb/user/{wallet}", self._hb_user)
+        self.app.router.add_post("/api/hb/trade", self._hb_trade)
+        self.app.router.add_post("/api/hb/trade/{trade_id}/close", self._hb_close_trade)
+        self.app.router.add_get("/api/hb/leaderboard", self._hb_leaderboard)
+        self.app.router.add_get("/api/hb/trades/open", self._hb_open_trades)
+        self.app.router.add_get("/api/hb/achievements/{wallet}", self._hb_achievements)
+        self.app.router.add_get("/api/hb/market", self._hb_market)
         self.app.router.add_get("/ws", self._ws_handler)
         if STATIC_DIR.exists():
             self.app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
@@ -369,6 +382,234 @@ class Dashboard:
             })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=502)
+
+    # ── HyperBulk Handlers ──────────────────────────────────────
+
+    async def _serve_hyperbulk(self, request):
+        """Serve the HyperBulk frontend page."""
+        page = STATIC_DIR / "hyperbulk.html"
+        if page.exists():
+            return web.FileResponse(page)
+        return web.Response(text="HyperBulk — static/hyperbulk.html not found", status=404)
+
+    async def _hb_register(self, request):
+        """Register a new HyperBulk user."""
+        try:
+            body = await request.json()
+            wallet = body.get("wallet")
+            username = body.get("username")
+            if not wallet or not username:
+                return web.json_response({"error": "wallet and username are required"}, status=400)
+            user = hb_register_user(wallet, username)
+            return web.json_response(user)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_user(self, request):
+        """Get HyperBulk user profile with stats."""
+        try:
+            wallet = request.match_info["wallet"]
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+            stats = hb_get_user_stats(user["id"])
+            return web.json_response({**user, **stats})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_trade(self, request):
+        """Open a new HyperBulk trade on one or both exchanges."""
+        try:
+            body = await request.json()
+            wallet = body.get("wallet")
+            exchange = body.get("exchange", "bulk")
+            symbol = body.get("symbol", "BTC-USD")
+            side = body.get("side", "BUY")
+            size = float(body.get("size", 0))
+
+            if not wallet or size <= 0:
+                return web.json_response({"error": "wallet and positive size are required"}, status=400)
+            if exchange not in ("bulk", "hyperliquid", "both"):
+                return web.json_response({"error": "exchange must be bulk, hyperliquid, or both"}, status=400)
+            if side not in ("BUY", "SELL"):
+                return web.json_response({"error": "side must be BUY or SELL"}, status=400)
+
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found. Register first."}, status=404)
+
+            # Fetch current price from Bulk API for fill price
+            fill_price = 0.0
+            try:
+                async with aiohttp.ClientSession() as session:
+                    url = f"{BULK_API_BASE}/ticker/{symbol}"
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            t = await resp.json(content_type=None)
+                            fill_price = float(t.get("lastPrice", 0))
+            except Exception:
+                pass
+
+            trades = []
+            exchanges_to_execute = []
+            if exchange == "both":
+                exchanges_to_execute = ["bulk", "hyperliquid"]
+            else:
+                exchanges_to_execute = [exchange]
+
+            for ex in exchanges_to_execute:
+                trade = hb_log_trade(
+                    user_id=user["id"],
+                    exchange=ex,
+                    symbol=symbol,
+                    side=side,
+                    size=size,
+                    entry_price=fill_price,
+                )
+                trades.append(trade)
+
+            return web.json_response({
+                "trades": trades,
+                "fill_price": fill_price,
+                "exchange": exchange,
+                "mode": "paper",
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_close_trade(self, request):
+        """Close an open HyperBulk trade."""
+        try:
+            trade_id = request.match_info["trade_id"]
+
+            # Fetch current price for PnL calculation
+            current_price = 0.0
+            try:
+                async with aiohttp.ClientSession() as session:
+                    url = f"{BULK_API_BASE}/ticker/BTC-USD"
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            t = await resp.json(content_type=None)
+                            current_price = float(t.get("lastPrice", 0))
+            except Exception:
+                pass
+
+            result = hb_close_trade(int(trade_id), current_price)
+            if not result:
+                return web.json_response({"error": "Trade not found or already closed"}, status=404)
+
+            # Check for achievements after closing a trade
+            if result.get("user_id"):
+                stats = hb_get_user_stats(result["user_id"])
+                # First trade achievement
+                if stats.get("total_trades", 0) == 1:
+                    hb_award_achievement(result["user_id"], "first_trade", "First Trade")
+                # Ten trades achievement
+                if stats.get("total_trades", 0) >= 10:
+                    hb_award_achievement(result["user_id"], "ten_trades", "10 Trades Club")
+                # Profitable streak
+                if stats.get("win_streak", 0) >= 5:
+                    hb_award_achievement(result["user_id"], "hot_streak", "Hot Streak (5 wins)")
+
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_leaderboard(self, request):
+        """HyperBulk leaderboard by period."""
+        try:
+            period = request.query.get("period", "alltime")
+            if period not in ("daily", "weekly", "alltime"):
+                return web.json_response({"error": "period must be daily, weekly, or alltime"}, status=400)
+            data = hb_get_leaderboard(period)
+            return web.json_response(data)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_open_trades(self, request):
+        """List open HyperBulk trades, optionally filtered by wallet."""
+        try:
+            wallet = request.query.get("wallet", None)
+            user_id = None
+            if wallet:
+                user = hb_get_user(wallet)
+                if not user:
+                    return web.json_response({"error": "User not found"}, status=404)
+                user_id = user["id"]
+            data = hb_get_open_trades(user_id)
+            return web.json_response(data)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_achievements(self, request):
+        """Get achievements for a HyperBulk user."""
+        try:
+            wallet = request.match_info["wallet"]
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+            data = hb_get_achievements(user["id"])
+            return web.json_response(data)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_market(self, request):
+        """Fetch tickers from BOTH Bulk and Hyperliquid APIs with spread comparison."""
+        symbols = ["BTC-USD", "ETH-USD", "SOL-USD"]
+        bulk_prices = {}
+        hl_prices = {}
+        spreads = {}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Fetch Bulk prices
+                for symbol in symbols:
+                    try:
+                        url = f"{BULK_API_BASE}/ticker/{symbol}"
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status == 200:
+                                t = await resp.json(content_type=None)
+                                bulk_prices[symbol] = float(t.get("lastPrice", 0))
+                    except Exception:
+                        bulk_prices[symbol] = None
+
+                # Fetch Hyperliquid mid prices
+                try:
+                    url = f"{HL_API_BASE}/info"
+                    async with session.post(url, json={"type": "allMids"},
+                                            timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            # HL uses short names: BTC, ETH, SOL
+                            hl_map = {"BTC-USD": "BTC", "ETH-USD": "ETH", "SOL-USD": "SOL"}
+                            for symbol in symbols:
+                                hl_sym = hl_map.get(symbol)
+                                if hl_sym and hl_sym in data:
+                                    hl_prices[symbol] = float(data[hl_sym])
+                                else:
+                                    hl_prices[symbol] = None
+                except Exception:
+                    for symbol in symbols:
+                        hl_prices[symbol] = None
+
+                # Calculate spreads
+                for symbol in symbols:
+                    bp = bulk_prices.get(symbol)
+                    hp = hl_prices.get(symbol)
+                    if bp and hp and hp > 0:
+                        spreads[symbol] = round(((bp - hp) / hp) * 100, 4)
+                    else:
+                        spreads[symbol] = None
+
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=502)
+
+        return web.json_response({
+            "bulk": bulk_prices,
+            "hyperliquid": hl_prices,
+            "spread": spreads,
+            "fetched_at": datetime.utcnow().isoformat() + "Z",
+        })
 
     async def _api_latency(self, request):
         minutes = int(request.query.get("minutes", "60"))
