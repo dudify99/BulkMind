@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>HyperBulk - Competitive Crypto Trading</title>
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js" onerror="window._noThree=true"></script>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js" onerror="window._noCharts=true"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0a0a0f;--surface:#12121a;--accent:#00ff88;--purple:#7c4dff;--red:#ff4444;--text:#e0e0e0;--text2:#888;--border:#1e1e2e;--radius:10px}
@@ -1079,6 +1079,12 @@ async function fetchAchievements() {
 
 // --- Three.js Globe ---
 function initGlobe() {
+  if (typeof THREE === 'undefined' || window._noThree) {
+    const container = document.getElementById('globe-container');
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--accent);font-size:.85rem;opacity:.6">HyperBulk</div>';
+    window.addTradeToGlobe = function() {};
+    return;
+  }
   const container = document.getElementById('globe-container');
   const canvas = document.getElementById('globe-canvas');
   const w = container.clientWidth, h = 250;
@@ -2084,6 +2090,10 @@ let ofInitialized = false;
 function setOfSymbol(s, el) { ofSymbol = s; activatePill(el); if(ofInitialized) fetchOrderFlow(); }
 
 function initOrderFlow() {
+  if (typeof LightweightCharts === 'undefined' || window._noCharts) {
+    document.getElementById('cvd-chart').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2);font-size:.8rem">Charts require internet</div>';
+    fetchOrderFlow(); return;
+  }
   if (!ofInitialized) {
     ofInitialized = true;
     const opts = (el) => ({
@@ -2211,6 +2221,9 @@ let liqInitialized = false;
 function setLiqSymbol(s, el) { liqSymbol = s; activatePill(el); if(liqInitialized) fetchLiquidity(); }
 
 function initLiquidity() {
+  if (typeof LightweightCharts === 'undefined' || window._noCharts) {
+    fetchLiquidity(); return;
+  }
   if (!liqInitialized) {
     liqInitialized = true;
     const depthEl = document.getElementById('depth-chart');
@@ -2321,6 +2334,9 @@ let derivInitialized = false;
 function setDerivSymbol(s, el) { derivSymbol = s; activatePill(el); if(derivInitialized) fetchDerivatives(); }
 
 function initDerivatives() {
+  if (typeof LightweightCharts === 'undefined' || window._noCharts) {
+    fetchDerivatives(); return;
+  }
   if (!derivInitialized) {
     derivInitialized = true;
     const oiEl = document.getElementById('oi-chart');
@@ -2525,6 +2541,11 @@ function setChartExchange(ex, el) {
 }
 
 function initCharts() {
+  if (typeof LightweightCharts === 'undefined' || window._noCharts) {
+    document.getElementById('price-chart').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text2);font-size:.8rem">Charts require internet (TradingView CDN)</div>';
+    document.getElementById('pnl-chart').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text2);font-size:.8rem">Charts require internet (TradingView CDN)</div>';
+    return;
+  }
   if (chartsInitialized) { fetchCandles(); fetchPnlHistory(); return; }
   chartsInitialized = true;
 
