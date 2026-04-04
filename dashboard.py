@@ -5,6 +5,7 @@ Serves REST API + live WebSocket feed + static frontend
 
 import asyncio
 import json
+import time
 import aiohttp
 from datetime import datetime
 from aiohttp import web
@@ -18,6 +19,8 @@ from db import (
     hb_get_achievements, hb_award_achievement,
     hb_create_game, hb_start_game, hb_end_game, hb_get_game,
     hb_get_active_game, hb_get_game_history, hb_get_game_leaderboard,
+    sniper_save_round, sniper_save_prediction, sniper_settle_round,
+    sniper_get_round, sniper_get_leaderboard,
 )
 from reporter import Reporter
 from config import DASHBOARD_HOST, DASHBOARD_PORT, BREAKOUT_PAPER_MODE, BULK_API_BASE, HL_API_BASE
@@ -78,6 +81,13 @@ class Dashboard:
         self.app.router.add_get("/api/hb/market", self._hb_market)
         self.app.router.add_get("/api/hb/candles", self._hb_candles)
         self.app.router.add_get("/api/hb/pnl-history/{wallet}", self._hb_pnl_history)
+        # ── Sniper Game Routes ──
+        self.app.router.add_post("/api/hb/sniper/create", self._sniper_create)
+        self.app.router.add_post("/api/hb/sniper/{round_id}/predict", self._sniper_predict)
+        self.app.router.add_get("/api/hb/sniper/{round_id}", self._sniper_state)
+        self.app.router.add_post("/api/hb/sniper/{round_id}/settle", self._sniper_settle)
+        self.app.router.add_get("/api/hb/sniper/active", self._sniper_active)
+        self.app.router.add_get("/api/hb/sniper/leaderboard", self._sniper_leaderboard)
         # ── Moon or Doom Game Routes ──
         self.app.router.add_post("/api/hb/game/start", self._hb_game_start)
         self.app.router.add_post("/api/hb/game/{game_id}/cashout", self._hb_game_cashout)
@@ -719,6 +729,170 @@ class Dashboard:
             "spread": spreads,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
         })
+
+    # ── Sniper Game Handlers ────────────────────────────────
+
+    async def _sniper_create(self, request):
+        """Create a new Sniper prediction round."""
+        try:
+            from sniper_engine import sniper, SniperConfig
+            body = await request.json()
+            symbol = body.get("symbol", "BTC-USD")
+            entry_fee = float(body.get("entry_fee", 5.0))
+            duration = int(body.get("duration_sec", 300))
+
+            config = SniperConfig(
+                symbol=symbol, entry_fee=entry_fee,
+                duration_sec=duration,
+            )
+            rnd = sniper.create_round(config)
+
+            # Persist to DB
+            sniper_save_round(
+                rnd.round_id, symbol, entry_fee, duration,
+                config.rake_pct,
+                datetime.utcfromtimestamp(rnd.locks_at).isoformat(),
+                datetime.utcfromtimestamp(rnd.settles_at).isoformat(),
+            )
+
+            return web.json_response(sniper.get_round_state(rnd.round_id))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _sniper_predict(self, request):
+        """Submit a price prediction for a Sniper round."""
+        try:
+            from sniper_engine import sniper
+            round_id = int(request.match_info["round_id"])
+            body = await request.json()
+            wallet = body.get("wallet")
+            predicted_price = float(body.get("price", 0))
+
+            if not wallet or predicted_price <= 0:
+                return web.json_response({"error": "wallet and positive price required"}, status=400)
+
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+
+            error = sniper.submit_prediction(
+                round_id, user["id"], wallet,
+                user.get("username", wallet[:8]),
+                predicted_price,
+            )
+            if error:
+                return web.json_response({"error": error}, status=400)
+
+            # Persist prediction
+            sniper_save_prediction(round_id, user["id"], predicted_price)
+
+            return web.json_response({
+                "status": "submitted",
+                "predicted_price": predicted_price,
+                **sniper.get_round_state(round_id),
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _sniper_state(self, request):
+        """Get current state of a Sniper round."""
+        try:
+            from sniper_engine import sniper
+            round_id = int(request.match_info["round_id"])
+
+            # Check if should auto-lock
+            sniper.check_lock(round_id)
+
+            # Check if should auto-settle
+            rnd = sniper.rounds.get(round_id)
+            if rnd and rnd.status.value == "locked" and time.time() > rnd.settles_at:
+                # Fetch actual price and settle
+                actual = await self._get_price(rnd.config.symbol, "bulk")
+                if actual:
+                    settled = sniper.settle(round_id, actual)
+                    if settled and settled.status.value == "settled":
+                        # Persist settlement
+                        results = [
+                            {
+                                "user_id": p.user_id, "rank": p.rank,
+                                "accuracy_pct": p.accuracy_pct,
+                                "distance_usd": p.distance_usd,
+                                "accuracy_tier": p.accuracy_tier,
+                                "payout_usd": p.payout_usd,
+                            }
+                            for p in settled.predictions
+                        ]
+                        sniper_settle_round(
+                            round_id, actual, settled.prize_pool_usd,
+                            settled.rake_usd, results,
+                        )
+
+            state = sniper.get_round_state(round_id)
+            if not state:
+                # Try DB
+                db_round = sniper_get_round(round_id)
+                if db_round:
+                    return web.json_response(db_round)
+                return web.json_response({"error": "Round not found"}, status=404)
+
+            return web.json_response(state)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _sniper_settle(self, request):
+        """Manually settle a round (admin/debug)."""
+        try:
+            from sniper_engine import sniper
+            round_id = int(request.match_info["round_id"])
+            rnd = sniper.rounds.get(round_id)
+            if not rnd:
+                return web.json_response({"error": "Round not found"}, status=404)
+
+            actual = await self._get_price(rnd.config.symbol, "bulk")
+            if not actual:
+                return web.json_response({"error": "Could not fetch price"}, status=502)
+
+            settled = sniper.settle(round_id, actual)
+            if not settled:
+                return web.json_response({"error": "Settlement failed"}, status=500)
+
+            # Persist
+            results = [
+                {
+                    "user_id": p.user_id, "rank": p.rank,
+                    "accuracy_pct": p.accuracy_pct,
+                    "distance_usd": p.distance_usd,
+                    "accuracy_tier": p.accuracy_tier,
+                    "payout_usd": p.payout_usd,
+                }
+                for p in settled.predictions
+            ]
+            sniper_settle_round(
+                round_id, actual, settled.prize_pool_usd,
+                settled.rake_usd, results,
+            )
+
+            return web.json_response(sniper.get_round_state(round_id))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _sniper_active(self, request):
+        """List all active Sniper rounds."""
+        try:
+            from sniper_engine import sniper
+            # Auto-check locks
+            for rid in list(sniper.rounds.keys()):
+                sniper.check_lock(rid)
+            return web.json_response(sniper.get_active_rounds())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _sniper_leaderboard(self, request):
+        """Sniper all-time leaderboard by total winnings."""
+        try:
+            return web.json_response(sniper_get_leaderboard())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     # ── Moon or Doom Game Handlers ────────────────────────
 

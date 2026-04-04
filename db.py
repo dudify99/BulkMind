@@ -330,6 +330,44 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_hb_games_user ON hb_games(user_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_hb_games_status ON hb_games(status)")
 
+    # ── Sniper Game Tables ───────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sniper_rounds (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol       TEXT NOT NULL,
+            entry_fee    REAL NOT NULL DEFAULT 5.0,
+            duration_sec INTEGER NOT NULL DEFAULT 300,
+            rake_pct     REAL NOT NULL DEFAULT 10.0,
+            status       TEXT DEFAULT 'open',
+            player_count INTEGER DEFAULT 0,
+            pot_usd      REAL DEFAULT 0,
+            prize_pool   REAL DEFAULT 0,
+            rake_usd     REAL DEFAULT 0,
+            actual_price REAL,
+            created_at   TEXT NOT NULL,
+            locks_at     TEXT NOT NULL,
+            settles_at   TEXT NOT NULL,
+            settled_at   TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sniper_predictions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            round_id        INTEGER NOT NULL,
+            user_id         INTEGER NOT NULL,
+            predicted_price REAL NOT NULL,
+            distance_usd    REAL,
+            accuracy_pct    REAL,
+            accuracy_tier   TEXT,
+            rank            INTEGER,
+            payout_usd      REAL DEFAULT 0,
+            submitted_at    TEXT NOT NULL,
+            UNIQUE(round_id, user_id)
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sniper_rounds_status ON sniper_rounds(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sniper_preds_round ON sniper_predictions(round_id)")
+
     # ── Indexes ──────────────────────────────────────────────
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_ts ON observed_trades(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_maker ON observed_trades(maker)")
@@ -1188,6 +1226,93 @@ def hb_get_open_trades(user_id: int = None) -> list:
         rows = conn.execute(
             "SELECT * FROM hb_trades WHERE status='OPEN' ORDER BY opened_at DESC"
         ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ── Sniper Game Helpers ───────────────────────────────────────
+
+def sniper_save_round(round_id: int, symbol: str, entry_fee: float,
+                      duration_sec: int, rake_pct: float,
+                      locks_at: str, settles_at: str) -> int:
+    conn = get_conn()
+    conn.execute(
+        """INSERT OR REPLACE INTO sniper_rounds
+           (id, symbol, entry_fee, duration_sec, rake_pct, status, created_at, locks_at, settles_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (round_id, symbol, entry_fee, duration_sec, rake_pct, "open",
+         datetime.utcnow().isoformat(), locks_at, settles_at)
+    )
+    conn.commit()
+    conn.close()
+    return round_id
+
+
+def sniper_save_prediction(round_id: int, user_id: int,
+                           predicted_price: float) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO sniper_predictions
+           (round_id, user_id, predicted_price, submitted_at)
+           VALUES (?,?,?,?)""",
+        (round_id, user_id, predicted_price, datetime.utcnow().isoformat())
+    )
+    # Update player count on round
+    conn.execute(
+        "UPDATE sniper_rounds SET player_count = player_count + 1, pot_usd = (player_count + 1) * entry_fee WHERE id=?",
+        (round_id,)
+    )
+    conn.commit()
+    row_id = cur.lastrowid or 0
+    conn.close()
+    return row_id
+
+
+def sniper_settle_round(round_id: int, actual_price: float,
+                        prize_pool: float, rake_usd: float,
+                        results: list):
+    """Persist settlement results. results = [{user_id, rank, accuracy_pct, distance_usd, payout_usd, accuracy_tier}]"""
+    conn = get_conn()
+    conn.execute(
+        """UPDATE sniper_rounds SET status='settled', actual_price=?, prize_pool=?,
+           rake_usd=?, settled_at=? WHERE id=?""",
+        (actual_price, prize_pool, rake_usd, datetime.utcnow().isoformat(), round_id)
+    )
+    for r in results:
+        conn.execute(
+            """UPDATE sniper_predictions SET rank=?, accuracy_pct=?, distance_usd=?,
+               accuracy_tier=?, payout_usd=? WHERE round_id=? AND user_id=?""",
+            (r["rank"], r["accuracy_pct"], r["distance_usd"],
+             r["accuracy_tier"], r["payout_usd"], round_id, r["user_id"])
+        )
+    conn.commit()
+    conn.close()
+
+
+def sniper_get_round(round_id: int) -> Optional[dict]:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM sniper_rounds WHERE id=?", (round_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def sniper_get_leaderboard(limit: int = 50) -> list:
+    """Best snipers by total winnings."""
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT p.user_id, u.username, u.wallet,
+                  SUM(p.payout_usd) as total_winnings,
+                  COUNT(*) as rounds_played,
+                  SUM(CASE WHEN p.rank = 1 THEN 1 ELSE 0 END) as first_places,
+                  AVG(p.accuracy_pct) as avg_accuracy
+           FROM sniper_predictions p
+           JOIN hb_users u ON p.user_id = u.id
+           WHERE p.rank IS NOT NULL
+           GROUP BY p.user_id
+           ORDER BY total_winnings DESC
+           LIMIT ?""",
+        (limit,)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
