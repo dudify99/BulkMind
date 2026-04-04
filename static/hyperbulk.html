@@ -142,6 +142,42 @@ a{color:var(--accent);text-decoration:none}
 .ws-status.connected{color:var(--accent);background:rgba(0,255,136,.1)}
 .ws-status.disconnected{color:var(--red);background:rgba(255,68,68,.1)}
 
+/* Flip It */
+.flip-coin{width:140px;height:140px;margin:20px auto;position:relative;perspective:600px}
+.flip-coin-inner{width:100%;height:100%;border-radius:50%;position:relative;transform-style:preserve-3d;transition:transform .8s cubic-bezier(.4,0,.2,1)}
+.flip-coin-inner.spinning{animation:coinSpin .8s ease-in-out}
+@keyframes coinSpin{0%{transform:rotateY(0)}100%{transform:rotateY(720deg)}}
+.flip-coin-face{width:100%;height:100%;border-radius:50%;position:absolute;display:flex;align-items:center;justify-content:center;font-size:3rem;font-weight:800;backface-visibility:hidden}
+.flip-coin-front{background:linear-gradient(135deg,var(--surface),#1a1a2e);border:3px solid var(--border)}
+.flip-coin-front.up-selected{border-color:var(--accent);box-shadow:0 0 30px rgba(0,255,136,.2)}
+.flip-coin-front.down-selected{border-color:var(--red);box-shadow:0 0 30px rgba(255,68,68,.2)}
+.flip-coin-front.won{border-color:var(--accent);box-shadow:0 0 40px rgba(0,255,136,.4);background:linear-gradient(135deg,rgba(0,255,136,.1),#1a1a2e)}
+.flip-coin-front.lost{border-color:var(--red);box-shadow:0 0 40px rgba(255,68,68,.4);background:linear-gradient(135deg,rgba(255,68,68,.1),#1a1a2e)}
+
+.flip-timer{text-align:center;font-size:3rem;font-weight:800;font-family:'Courier New',monospace;color:var(--accent);margin:10px 0}
+.flip-timer.urgent{color:var(--red);animation:timerBlink .5s infinite}
+
+.flip-direction-btns{display:flex;gap:12px;margin:16px 0}
+.flip-dir-btn{flex:1;padding:20px;border-radius:var(--radius);font-size:1.3rem;font-weight:800;cursor:pointer;border:3px solid var(--border);background:var(--surface);color:var(--text);transition:all .2s;text-align:center}
+.flip-dir-btn:hover{transform:scale(1.02)}
+.flip-dir-btn.up{border-color:var(--accent);color:var(--accent)}
+.flip-dir-btn.up:hover,.flip-dir-btn.up.selected{background:var(--accent);color:#000;box-shadow:0 0 20px rgba(0,255,136,.2)}
+.flip-dir-btn.down{border-color:var(--red);color:var(--red)}
+.flip-dir-btn.down:hover,.flip-dir-btn.down.selected{background:var(--red);color:#fff;box-shadow:0 0 20px rgba(255,68,68,.2)}
+
+.flip-streak{text-align:center;margin:12px 0;font-size:.85rem}
+.flip-streak-count{font-size:1.4rem;font-weight:800;color:var(--accent);font-family:monospace}
+.flip-streak-mult{color:var(--purple);font-weight:700}
+
+.flip-result{text-align:center;padding:24px;margin:16px 0;border-radius:var(--radius);border:2px solid var(--border)}
+.flip-result.win{border-color:var(--accent);background:rgba(0,255,136,.05)}
+.flip-result.lose{border-color:var(--red);background:rgba(255,68,68,.05)}
+.flip-result-text{font-size:1.6rem;font-weight:800}
+.flip-result-pnl{font-size:1.2rem;font-family:monospace;margin-top:6px}
+
+.flip-history-item{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);font-size:.8rem}
+.flip-history-dir{font-weight:700;min-width:50px}
+
 /* Sniper Game */
 .sniper-scope{position:relative;width:100%;aspect-ratio:1.6;max-height:220px;background:radial-gradient(circle,rgba(0,255,136,.03) 0%,transparent 70%);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
 .sniper-crosshair{position:absolute;inset:0;pointer-events:none}
@@ -256,6 +292,7 @@ a{color:var(--accent);text-decoration:none}
 <!-- Tab Bar -->
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchTab('trade')">Trade</button>
+  <button class="tab-btn" onclick="switchTab('flipit')">Flip It</button>
   <button class="tab-btn" onclick="switchTab('sniper')">Sniper</button>
   <button class="tab-btn" onclick="switchTab('charts')">Charts</button>
   <button class="tab-btn" onclick="switchTab('orderflow')">Order Flow</button>
@@ -301,6 +338,68 @@ a{color:var(--accent);text-decoration:none}
   <div id="open-positions"><div class="empty">No open positions</div></div>
   <div class="section-title">Live Trade Feed</div>
   <div class="live-feed" id="live-feed"><div class="empty">Connecting to live feed...</div></div>
+</div>
+
+<!-- Flip It Tab -->
+<div class="tab-content" id="tab-flipit">
+  <div class="pills" id="flip-symbol-pills">
+    <div class="pill active" onclick="setFlipSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setFlipSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setFlipSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+
+  <!-- Coin -->
+  <div class="flip-coin">
+    <div class="flip-coin-inner" id="flip-coin-inner">
+      <div class="flip-coin-face flip-coin-front" id="flip-coin-face">?</div>
+    </div>
+  </div>
+
+  <!-- Timer (hidden until game starts) -->
+  <div class="flip-timer" id="flip-timer" style="display:none">60</div>
+
+  <!-- Current price -->
+  <div style="text-align:center;font-size:.8rem;color:var(--text2);margin-bottom:10px">
+    <span id="flip-live-price">$--,---.--</span>
+  </div>
+
+  <!-- Direction buttons -->
+  <div class="flip-direction-btns" id="flip-dir-btns">
+    <div class="flip-dir-btn up" onclick="setFlipDirection('up')">UP</div>
+    <div class="flip-dir-btn down" onclick="setFlipDirection('down')">DOWN</div>
+  </div>
+
+  <!-- Bet amount -->
+  <div class="size-row">
+    <input type="number" class="size-input" id="flip-bet-input" placeholder="Bet amount ($)" value="5" step="1" min="1">
+    <div class="size-quick">
+      <button onclick="document.getElementById('flip-bet-input').value=1">$1</button>
+      <button onclick="document.getElementById('flip-bet-input').value=5">$5</button>
+      <button onclick="document.getElementById('flip-bet-input').value=10">$10</button>
+      <button onclick="document.getElementById('flip-bet-input').value=25">$25</button>
+    </div>
+  </div>
+
+  <!-- Streak info -->
+  <div class="flip-streak">
+    Streak: <span class="flip-streak-count" id="flip-streak">0</span>
+    <span class="flip-streak-mult" id="flip-mult">1.8x payout</span>
+  </div>
+
+  <!-- Go button -->
+  <button class="btn-sniper fire" id="btn-flip-go" onclick="flipGo()">
+    FLIP IT
+  </button>
+
+  <!-- Result (hidden until game ends) -->
+  <div class="flip-result" id="flip-result" style="display:none">
+    <div class="flip-result-text" id="flip-result-text"></div>
+    <div class="flip-result-pnl" id="flip-result-pnl"></div>
+  </div>
+
+  <!-- Recent flips -->
+  <div class="section-title" style="margin-top:16px">Recent Flips</div>
+  <div id="flip-history"><div class="empty">No flips yet</div></div>
 </div>
 
 <!-- Sniper Tab -->
@@ -567,9 +666,10 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const tabs = ['trade', 'sniper', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
+  const tabs = ['trade', 'flipit', 'sniper', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
   const idx = tabs.indexOf(name);
   document.querySelectorAll('.tab-btn')[idx].classList.add('active');
+  if (name === 'flipit') initFlip();
   if (name === 'sniper') initSniper();
   if (name === 'charts') initCharts();
   if (name === 'orderflow') initOrderFlow();
@@ -997,6 +1097,216 @@ function handleLiveTrade(trade) {
   while (feed.children.length > MAX_FEED_ITEMS) {
     feed.removeChild(feed.lastChild);
   }
+}
+
+// --- Flip It Game ---
+let flipSymbol = 'BTC-USD';
+let flipDirection = null;
+let flipGameId = null;
+let flipPollInterval = null;
+let flipInitialized = false;
+
+function setFlipSymbol(s, el) { flipSymbol = s; activatePill(el); flipUpdatePrice(); }
+
+function initFlip() {
+  flipInitialized = true;
+  flipUpdatePrice();
+  flipFetchHistory();
+  flipFetchStreak();
+}
+
+function flipUpdatePrice() {
+  const prices = { 'BTC-USD': 69425, 'ETH-USD': 3521, 'SOL-USD': 187 };
+  const p = market.price || market.bulk_price || prices[flipSymbol] || 0;
+  document.getElementById('flip-live-price').textContent = '$' + p.toLocaleString('en-US', { minimumFractionDigits: 2 });
+}
+
+function setFlipDirection(dir) {
+  flipDirection = dir;
+  document.querySelectorAll('.flip-dir-btn').forEach(b => b.classList.remove('selected'));
+  document.querySelector('.flip-dir-btn.' + dir).classList.add('selected');
+  const face = document.getElementById('flip-coin-face');
+  face.textContent = dir === 'up' ? '\u2191' : '\u2193';
+  face.className = 'flip-coin-face flip-coin-front ' + dir + '-selected';
+}
+
+async function flipGo() {
+  if (!wallet) { showToast('Connect wallet first', 'error'); return; }
+  if (!flipDirection) { showToast('Pick UP or DOWN', 'error'); return; }
+  const bet = parseFloat(document.getElementById('flip-bet-input').value) || 5;
+
+  // Disable button
+  const btn = document.getElementById('btn-flip-go');
+  btn.disabled = true;
+  btn.textContent = 'FLIPPING...';
+  document.getElementById('flip-result').style.display = 'none';
+
+  // Spin coin animation
+  document.getElementById('flip-coin-inner').classList.add('spinning');
+  setTimeout(() => document.getElementById('flip-coin-inner').classList.remove('spinning'), 800);
+
+  try {
+    const res = await fetch(API + '/api/hb/flip/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet, symbol: flipSymbol, direction: flipDirection, bet_amount: bet, exchange: 'bulk' })
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    flipGameId = data.game_id;
+    showToast(flipDirection.toUpperCase() + ' $' + bet + ' on ' + flipSymbol, 'success');
+
+    // Show timer and start polling
+    document.getElementById('flip-timer').style.display = 'block';
+    document.getElementById('flip-dir-btns').style.display = 'none';
+    flipStartPolling(data.game_id);
+  } catch (e) {
+    // Demo mode — simulate 60s countdown then random result
+    showToast('Flip started (demo)', 'info');
+    flipGameId = 'demo';
+    document.getElementById('flip-timer').style.display = 'block';
+    document.getElementById('flip-dir-btns').style.display = 'none';
+    flipDemoCountdown(bet);
+  }
+}
+
+function flipStartPolling(gameId) {
+  if (flipPollInterval) clearInterval(flipPollInterval);
+  flipPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch(API + '/api/hb/flip/' + gameId);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      // Update timer
+      const remaining = data.time_remaining || 0;
+      const timer = document.getElementById('flip-timer');
+      timer.textContent = Math.ceil(remaining);
+      timer.className = remaining < 10 ? 'flip-timer urgent' : 'flip-timer';
+
+      // If settled
+      if (data.status === 'won' || data.status === 'lost') {
+        clearInterval(flipPollInterval);
+        flipShowResult(data);
+      }
+    } catch (e) {}
+  }, 1000);
+}
+
+function flipDemoCountdown(bet) {
+  let remaining = 60;
+  const interval = setInterval(() => {
+    remaining--;
+    const timer = document.getElementById('flip-timer');
+    timer.textContent = remaining;
+    timer.className = remaining < 10 ? 'flip-timer urgent' : 'flip-timer';
+
+    if (remaining <= 0) {
+      clearInterval(interval);
+      const won = Math.random() > 0.45;
+      flipShowResult({
+        status: won ? 'won' : 'lost',
+        won: won,
+        direction: flipDirection,
+        payout_usd: won ? +(bet * 1.8).toFixed(2) : 0,
+        pnl_usd: won ? +(bet * 0.8).toFixed(2) : -bet,
+        price_change_pct: (Math.random() * 0.4 - 0.2).toFixed(3),
+        streak: won ? 1 : 0,
+        payout_multiplier: 1.8,
+        next_streak_mult: won ? 1.8 : 1.8,
+      });
+    }
+  }, 1000);
+}
+
+function flipShowResult(data) {
+  const won = data.won || data.status === 'won';
+  const face = document.getElementById('flip-coin-face');
+  const coin = document.getElementById('flip-coin-inner');
+
+  // Spin and reveal
+  coin.classList.add('spinning');
+  setTimeout(() => {
+    coin.classList.remove('spinning');
+    face.textContent = won ? '\u2705' : '\u274C';
+    face.className = 'flip-coin-face flip-coin-front ' + (won ? 'won' : 'lost');
+  }, 400);
+
+  // Show result
+  const result = document.getElementById('flip-result');
+  result.style.display = 'block';
+  result.className = 'flip-result ' + (won ? 'win' : 'lose');
+  document.getElementById('flip-result-text').textContent = won ? 'YOU WON!' : 'YOU LOST';
+  document.getElementById('flip-result-text').style.color = won ? 'var(--accent)' : 'var(--red)';
+  const pnl = data.pnl_usd || 0;
+  document.getElementById('flip-result-pnl').textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) +
+    (won ? ' (' + (data.payout_multiplier || 1.8) + 'x)' : '');
+  document.getElementById('flip-result-pnl').style.color = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+
+  // Update streak
+  document.getElementById('flip-streak').textContent = data.streak || 0;
+  document.getElementById('flip-mult').textContent = (data.next_streak_mult || 1.8) + 'x payout';
+
+  // Reset UI after 2 seconds
+  setTimeout(() => {
+    document.getElementById('flip-timer').style.display = 'none';
+    document.getElementById('flip-dir-btns').style.display = 'flex';
+    document.getElementById('btn-flip-go').disabled = false;
+    document.getElementById('btn-flip-go').textContent = 'FLIP IT';
+    flipDirection = null;
+    document.querySelectorAll('.flip-dir-btn').forEach(b => b.classList.remove('selected'));
+    face.textContent = '?';
+    face.className = 'flip-coin-face flip-coin-front';
+    flipFetchHistory();
+  }, 3000);
+}
+
+async function flipFetchStreak() {
+  if (!wallet) return;
+  try {
+    const res = await fetch(API + '/api/hb/flip/stats/' + wallet);
+    if (!res.ok) return;
+    const data = await res.json();
+    document.getElementById('flip-streak').textContent = data.current_streak || 0;
+    const mult = data.current_streak >= 10 ? 5.0 : data.current_streak >= 7 ? 3.0 :
+      data.current_streak >= 5 ? 2.5 : data.current_streak >= 3 ? 2.0 : 1.8;
+    document.getElementById('flip-mult').textContent = mult + 'x payout';
+  } catch (e) {}
+}
+
+async function flipFetchHistory() {
+  const el = document.getElementById('flip-history');
+  if (!wallet) {
+    // Demo history
+    el.innerHTML = [
+      { direction: 'up', symbol: 'BTC-USD', won: 1, pnl_usd: 4.0, streak: 3 },
+      { direction: 'down', symbol: 'ETH-USD', won: 0, pnl_usd: -5.0, streak: 0 },
+      { direction: 'up', symbol: 'SOL-USD', won: 1, pnl_usd: 9.0, streak: 2 },
+      { direction: 'up', symbol: 'BTC-USD', won: 1, pnl_usd: 4.0, streak: 1 },
+    ].map(flipRenderHistoryItem).join('');
+    return;
+  }
+  try {
+    const res = await fetch(API + '/api/hb/flip/history/' + wallet);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    if (!data.length) { el.innerHTML = '<div class="empty">No flips yet</div>'; return; }
+    el.innerHTML = data.slice(0, 10).map(flipRenderHistoryItem).join('');
+  } catch (e) {}
+}
+
+function flipRenderHistoryItem(g) {
+  const won = g.won || g.status === 'won';
+  const pnl = g.pnl_usd || 0;
+  const arrow = g.direction === 'up' ? '\u2191' : '\u2193';
+  const dirColor = g.direction === 'up' ? 'var(--accent)' : 'var(--red)';
+  return '<div class="flip-history-item">' +
+    '<span class="flip-history-dir" style="color:' + dirColor + '">' + arrow + ' ' + (g.direction || '').toUpperCase() + '</span>' +
+    '<span>' + (g.symbol || 'BTC-USD') + '</span>' +
+    '<span style="color:' + (won ? 'var(--accent)' : 'var(--red)') + ';font-weight:700">' + (won ? 'WIN' : 'LOSS') + '</span>' +
+    '<span style="font-family:monospace;color:' + (pnl >= 0 ? 'var(--accent)' : 'var(--red)') + '">' +
+    (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</span>' +
+    '<span style="color:var(--text2)">' + (g.streak || 0) + ' streak</span>' +
+    '</div>';
 }
 
 // --- Sniper Game ---

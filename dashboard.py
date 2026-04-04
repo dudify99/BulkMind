@@ -21,6 +21,8 @@ from db import (
     hb_get_active_game, hb_get_game_history, hb_get_game_leaderboard,
     sniper_save_round, sniper_save_prediction, sniper_settle_round,
     sniper_get_round, sniper_get_leaderboard,
+    flip_create, flip_start, flip_settle, flip_get_streak,
+    flip_get_history, flip_get_stats, flip_get_leaderboard,
 )
 from reporter import Reporter
 from config import DASHBOARD_HOST, DASHBOARD_PORT, BREAKOUT_PAPER_MODE, BULK_API_BASE, HL_API_BASE
@@ -81,6 +83,12 @@ class Dashboard:
         self.app.router.add_get("/api/hb/market", self._hb_market)
         self.app.router.add_get("/api/hb/candles", self._hb_candles)
         self.app.router.add_get("/api/hb/pnl-history/{wallet}", self._hb_pnl_history)
+        # ── Flip It Game Routes ──
+        self.app.router.add_post("/api/hb/flip/start", self._flip_start)
+        self.app.router.add_get("/api/hb/flip/{game_id}", self._flip_state)
+        self.app.router.add_get("/api/hb/flip/stats/{wallet}", self._flip_stats)
+        self.app.router.add_get("/api/hb/flip/history/{wallet}", self._flip_history)
+        self.app.router.add_get("/api/hb/flip/leaderboard", self._flip_leaderboard)
         # ── Sniper Game Routes ──
         self.app.router.add_post("/api/hb/sniper/create", self._sniper_create)
         self.app.router.add_post("/api/hb/sniper/{round_id}/predict", self._sniper_predict)
@@ -729,6 +737,156 @@ class Dashboard:
             "spread": spreads,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
         })
+
+    # ── Flip It Game Handlers ────────────────────────────────
+
+    async def _flip_start(self, request):
+        """Start a Flip It game — pick UP or DOWN, 60 seconds."""
+        try:
+            from flip_engine import flip
+            body = await request.json()
+            wallet = body.get("wallet")
+            symbol = body.get("symbol", "BTC-USD")
+            direction = body.get("direction", "up").lower()
+            bet_amount = float(body.get("bet_amount", 5.0))
+            exchange = body.get("exchange", "bulk")
+
+            if not wallet or bet_amount <= 0:
+                return web.json_response({"error": "wallet and positive bet required"}, status=400)
+            if direction not in ("up", "down"):
+                return web.json_response({"error": "direction must be up or down"}, status=400)
+
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+
+            # Get current streak
+            streak = flip_get_streak(user["id"])
+
+            # Create in engine + DB
+            game = flip.create_game(
+                user["id"], symbol, exchange, direction, bet_amount,
+                streak=streak,
+            )
+            db_id = flip_create(user["id"], symbol, exchange, direction, bet_amount, streak)
+            game.game_id = db_id
+
+            # Get entry price
+            fill_price = await self._get_price(symbol, exchange)
+            if not fill_price:
+                return web.json_response({"error": "Could not fetch price"}, status=502)
+
+            # Open position (BUY for UP, SELL for DOWN)
+            side = "BUY" if direction == "up" else "SELL"
+            size = round(bet_amount * 10 / fill_price, 6)  # 10x notional for visible PnL
+            order_id = ""
+
+            executor = self.bulk_executor if exchange == "bulk" else self.hl_executor
+            if executor:
+                ex_symbol = symbol
+                if exchange == "hyperliquid":
+                    from config import HL_SYMBOL_MAP
+                    ex_symbol = HL_SYMBOL_MAP.get(symbol, symbol)
+                order = await executor.place_order(
+                    symbol=ex_symbol, side=side, price=fill_price,
+                    size=size, order_type="market",
+                )
+                if order:
+                    order_id = order.get("order_id", "")
+                    fill_price = float(order.get("price", fill_price))
+
+            # Start
+            flip.start_game(db_id, fill_price, size, order_id)
+            flip_start(db_id, fill_price, size, order_id)
+
+            # Broadcast
+            await self.reporter.broadcast_trade({
+                "symbol": symbol, "side": side.lower(),
+                "price": fill_price, "size": size,
+                "value_usd": round(fill_price * size, 2),
+                "exchange": exchange, "reason": "flip",
+                "ts": datetime.utcnow().isoformat(),
+            })
+
+            return web.json_response(flip.to_dict(game))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _flip_state(self, request):
+        """Get live state of a Flip It game. Auto-settles when timer expires."""
+        try:
+            from flip_engine import flip
+            game_id = int(request.match_info["game_id"])
+            game = flip.active_games.get(game_id)
+
+            if not game:
+                # Check DB for finished game
+                from db import get_conn
+                conn = get_conn()
+                row = conn.execute("SELECT * FROM flip_games WHERE id=?", (game_id,)).fetchone()
+                conn.close()
+                if row:
+                    return web.json_response(dict(row))
+                return web.json_response({"error": "Game not found"}, status=404)
+
+            # Tick with current price
+            current_price = await self._get_price(game.symbol, game.exchange)
+            if current_price:
+                flip.tick(game_id, current_price)
+
+            # If just settled, persist
+            if game.status in ("won", "lost"):
+                flip_settle(
+                    game_id, game.exit_price, game.won,
+                    game.price_change_pct, game.payout_multiplier,
+                    game.payout_usd, game.pnl_usd, game.streak,
+                )
+                # Close the position
+                executor = self.bulk_executor if game.exchange == "bulk" else self.hl_executor
+                if executor and game.size > 0:
+                    close_side = "SELL" if game.direction == "up" else "BUY"
+                    ex_symbol = game.symbol
+                    if game.exchange == "hyperliquid":
+                        from config import HL_SYMBOL_MAP
+                        ex_symbol = HL_SYMBOL_MAP.get(game.symbol, game.symbol)
+                    await executor.place_order(
+                        symbol=ex_symbol, side=close_side,
+                        price=current_price, size=game.size,
+                        order_type="market",
+                    )
+
+            return web.json_response(flip.to_dict(game))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _flip_stats(self, request):
+        """Get Flip It stats for a user."""
+        try:
+            wallet = request.match_info["wallet"]
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+            return web.json_response(flip_get_stats(user["id"]))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _flip_history(self, request):
+        """Get Flip It game history for a user."""
+        try:
+            wallet = request.match_info["wallet"]
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+            return web.json_response(flip_get_history(user["id"]))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _flip_leaderboard(self, request):
+        """Flip It leaderboard — most profitable flippers."""
+        try:
+            return web.json_response(flip_get_leaderboard())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     # ── Sniper Game Handlers ────────────────────────────────
 

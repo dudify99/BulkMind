@@ -368,6 +368,34 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_sniper_rounds_status ON sniper_rounds(status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sniper_preds_round ON sniper_predictions(round_id)")
 
+    # ── Flip It Game Tables ──────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS flip_games (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            symbol       TEXT NOT NULL,
+            exchange     TEXT NOT NULL DEFAULT 'bulk',
+            direction    TEXT NOT NULL,
+            bet_amount   REAL NOT NULL,
+            entry_price  REAL,
+            exit_price   REAL,
+            size         REAL,
+            price_change_pct REAL,
+            won          INTEGER DEFAULT 0,
+            streak       INTEGER DEFAULT 0,
+            payout_mult  REAL DEFAULT 1.8,
+            payout_usd   REAL DEFAULT 0,
+            pnl_usd      REAL DEFAULT 0,
+            status       TEXT DEFAULT 'pending',
+            order_id     TEXT,
+            started_at   TEXT,
+            ended_at     TEXT,
+            created_at   TEXT NOT NULL
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_flip_user ON flip_games(user_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_flip_status ON flip_games(status)")
+
     # ── Indexes ──────────────────────────────────────────────
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_ts ON observed_trades(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_maker ON observed_trades(maker)")
@@ -1226,6 +1254,125 @@ def hb_get_open_trades(user_id: int = None) -> list:
         rows = conn.execute(
             "SELECT * FROM hb_trades WHERE status='OPEN' ORDER BY opened_at DESC"
         ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ── Flip It Game Helpers ──────────────────────────────────────
+
+def flip_create(user_id: int, symbol: str, exchange: str,
+                direction: str, bet_amount: float, streak: int = 0) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        """INSERT INTO flip_games (user_id, symbol, exchange, direction, bet_amount,
+           streak, status, created_at) VALUES (?,?,?,?,?,?,?,?)""",
+        (user_id, symbol, exchange, direction, bet_amount, streak,
+         "pending", datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    game_id = cur.lastrowid
+    conn.close()
+    return game_id
+
+
+def flip_start(game_id: int, entry_price: float, size: float,
+               order_id: str = ""):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE flip_games SET entry_price=?, size=?, order_id=?,
+           status='live', started_at=? WHERE id=?""",
+        (entry_price, size, order_id, datetime.utcnow().isoformat(), game_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def flip_settle(game_id: int, exit_price: float, won: bool,
+                price_change_pct: float, payout_mult: float,
+                payout_usd: float, pnl_usd: float, streak: int):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE flip_games SET exit_price=?, won=?, price_change_pct=?,
+           payout_mult=?, payout_usd=?, pnl_usd=?, streak=?,
+           status=?, ended_at=? WHERE id=?""",
+        (exit_price, int(won), price_change_pct, payout_mult,
+         payout_usd, pnl_usd, streak,
+         "won" if won else "lost", datetime.utcnow().isoformat(), game_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def flip_get_streak(user_id: int) -> int:
+    """Get current win streak for a user."""
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT won FROM flip_games WHERE user_id=? AND status IN ('won','lost')
+           ORDER BY id DESC LIMIT 20""",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    streak = 0
+    for r in rows:
+        if r["won"]:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def flip_get_history(user_id: int, limit: int = 50) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT * FROM flip_games WHERE user_id=? AND status IN ('won','lost')
+           ORDER BY id DESC LIMIT ?""",
+        (user_id, limit)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def flip_get_stats(user_id: int) -> dict:
+    conn = get_conn()
+    row = conn.execute(
+        """SELECT COUNT(*) as total,
+                  SUM(CASE WHEN won=1 THEN 1 ELSE 0 END) as wins,
+                  SUM(pnl_usd) as total_pnl,
+                  MAX(streak) as best_streak,
+                  MAX(payout_mult) as best_mult
+           FROM flip_games WHERE user_id=? AND status IN ('won','lost')""",
+        (user_id,)
+    ).fetchone()
+    conn.close()
+    d = dict(row) if row else {}
+    total = d.get("total", 0) or 0
+    wins = d.get("wins", 0) or 0
+    return {
+        "total": total,
+        "wins": wins,
+        "losses": total - wins,
+        "win_rate": round(wins / total * 100, 1) if total else 0,
+        "total_pnl": round(d.get("total_pnl", 0) or 0, 2),
+        "best_streak": d.get("best_streak", 0) or 0,
+        "best_mult": d.get("best_mult", 1.8) or 1.8,
+        "current_streak": flip_get_streak(user_id),
+    }
+
+
+def flip_get_leaderboard(limit: int = 50) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT f.user_id, u.username, u.wallet,
+                  COUNT(*) as total_flips,
+                  SUM(CASE WHEN f.won=1 THEN 1 ELSE 0 END) as wins,
+                  SUM(f.pnl_usd) as total_pnl,
+                  MAX(f.streak) as best_streak
+           FROM flip_games f JOIN hb_users u ON f.user_id = u.id
+           WHERE f.status IN ('won','lost')
+           GROUP BY f.user_id
+           ORDER BY total_pnl DESC LIMIT ?""",
+        (limit,)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
