@@ -142,6 +142,58 @@ a{color:var(--accent);text-decoration:none}
 .ws-status.connected{color:var(--accent);background:rgba(0,255,136,.1)}
 .ws-status.disconnected{color:var(--red);background:rgba(255,68,68,.1)}
 
+/* Sniper Game */
+.sniper-scope{position:relative;width:100%;aspect-ratio:1.6;max-height:220px;background:radial-gradient(circle,rgba(0,255,136,.03) 0%,transparent 70%);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+.sniper-crosshair{position:absolute;inset:0;pointer-events:none}
+.sniper-crosshair::before,.sniper-crosshair::after{content:'';position:absolute;background:var(--accent);opacity:.25}
+.sniper-crosshair::before{width:1px;height:100%;left:50%;top:0}
+.sniper-crosshair::after{width:100%;height:1px;top:50%;left:0}
+.sniper-ring{position:absolute;width:120px;height:120px;border:2px solid var(--accent);border-radius:50%;top:50%;left:50%;transform:translate(-50%,-50%);opacity:.2;animation:sniperPulse 2s ease-in-out infinite}
+.sniper-ring-inner{position:absolute;width:60px;height:60px;border:1px solid var(--accent);border-radius:50%;top:50%;left:50%;transform:translate(-50%,-50%);opacity:.3}
+@keyframes sniperPulse{0%,100%{opacity:.2;transform:translate(-50%,-50%) scale(1)}50%{opacity:.4;transform:translate(-50%,-50%) scale(1.1)}}
+.sniper-price-target{font-size:2rem;font-weight:800;font-family:'Courier New',monospace;color:var(--accent);z-index:2;text-shadow:0 0 20px rgba(0,255,136,.3)}
+.sniper-live-price{position:absolute;bottom:10px;right:14px;font-size:.75rem;color:var(--text2);font-family:monospace}
+.sniper-timer{position:absolute;top:10px;right:14px;font-size:1.4rem;font-weight:800;font-family:monospace;color:var(--accent)}
+.sniper-timer.urgent{color:var(--red);animation:timerBlink .5s infinite}
+@keyframes timerBlink{0%,100%{opacity:1}50%{opacity:.3}}
+.sniper-players{position:absolute;top:10px;left:14px;font-size:.75rem;color:var(--text2)}
+
+.sniper-input-row{display:flex;gap:10px;margin-bottom:14px}
+.sniper-price-input{flex:1;background:var(--surface);border:2px solid var(--border);color:var(--accent);padding:16px;border-radius:var(--radius);font-size:1.3rem;font-family:'Courier New',monospace;font-weight:700;text-align:center;transition:border-color .2s}
+.sniper-price-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 20px rgba(0,255,136,.15)}
+.sniper-price-input::placeholder{color:var(--text2);font-weight:400;font-size:.9rem}
+
+.btn-sniper{width:100%;padding:16px;border:none;border-radius:var(--radius);font-size:1rem;font-weight:800;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:2px}
+.btn-sniper.fire{background:linear-gradient(135deg,var(--accent),#00cc6a);color:#000}
+.btn-sniper.fire:hover{filter:brightness(1.1)}
+.btn-sniper.fire:active{transform:scale(.97)}
+.btn-sniper:disabled{opacity:.4;cursor:not-allowed;transform:none}
+
+.sniper-round-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:10px;cursor:pointer;transition:border-color .2s}
+.sniper-round-card:hover{border-color:var(--accent)}
+.sniper-round-card .round-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.sniper-round-card .round-symbol{font-weight:700;font-size:.95rem}
+.sniper-round-card .round-status{font-size:.72rem;font-weight:700;padding:3px 8px;border-radius:6px}
+.round-status.open{color:var(--accent);background:rgba(0,255,136,.1)}
+.round-status.locked{color:#FFC107;background:rgba(255,193,7,.1)}
+.round-status.settled{color:var(--purple);background:rgba(124,77,255,.15)}
+.sniper-round-card .round-meta{font-size:.75rem;color:var(--text2);display:flex;gap:16px}
+
+.sniper-result{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.sniper-result.winner{border-color:var(--accent);box-shadow:0 0 15px rgba(0,255,136,.08)}
+.sniper-result .result-rank{font-size:1.2rem;font-weight:800;min-width:36px}
+.sniper-result .result-info{flex:1;margin:0 12px}
+.sniper-result .result-name{font-weight:700;font-size:.85rem}
+.sniper-result .result-pred{font-size:.72rem;color:var(--text2);font-family:monospace}
+.sniper-result .result-accuracy{text-align:right}
+.sniper-result .result-tier{font-size:.72rem;font-weight:700;padding:2px 6px;border-radius:4px}
+.tier-perfect{color:#FFD700;background:rgba(255,215,0,.15)}
+.tier-sniper{color:var(--accent);background:rgba(0,255,136,.1)}
+.tier-sharp{color:#FFC107;background:rgba(255,193,7,.1)}
+.tier-close{color:var(--text2);background:rgba(136,136,136,.1)}
+.tier-miss{color:var(--red);background:rgba(255,68,68,.1)}
+.result-payout{font-size:.9rem;font-weight:800;font-family:monospace;color:var(--accent)}
+
 /* Charts */
 .chart-container{width:100%;height:350px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);margin-bottom:14px;background:var(--surface)}
 .chart-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)}
@@ -204,6 +256,7 @@ a{color:var(--accent);text-decoration:none}
 <!-- Tab Bar -->
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchTab('trade')">Trade</button>
+  <button class="tab-btn" onclick="switchTab('sniper')">Sniper</button>
   <button class="tab-btn" onclick="switchTab('charts')">Charts</button>
   <button class="tab-btn" onclick="switchTab('orderflow')">Order Flow</button>
   <button class="tab-btn" onclick="switchTab('liquidity')">Liquidity</button>
@@ -248,6 +301,65 @@ a{color:var(--accent);text-decoration:none}
   <div id="open-positions"><div class="empty">No open positions</div></div>
   <div class="section-title">Live Trade Feed</div>
   <div class="live-feed" id="live-feed"><div class="empty">Connecting to live feed...</div></div>
+</div>
+
+<!-- Sniper Tab -->
+<div class="tab-content" id="tab-sniper">
+  <!-- Scope view -->
+  <div class="sniper-scope" id="sniper-scope">
+    <div class="sniper-crosshair"></div>
+    <div class="sniper-ring"></div>
+    <div class="sniper-ring-inner"></div>
+    <div class="sniper-price-target" id="sniper-target-price">$69,420.00</div>
+    <div class="sniper-live-price" id="sniper-live">LIVE: $--,---.--</div>
+    <div class="sniper-timer" id="sniper-timer">5:00</div>
+    <div class="sniper-players" id="sniper-players">0 snipers</div>
+  </div>
+
+  <!-- Symbol + Round config -->
+  <div class="pills" id="sniper-symbol-pills">
+    <div class="pill active" onclick="setSniperSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setSniperSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setSniperSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+
+  <!-- Price input -->
+  <input type="number" class="sniper-price-input" id="sniper-price-input"
+         placeholder="Your price prediction..." step="0.01" min="0">
+
+  <!-- Quick adjust buttons -->
+  <div style="display:flex;gap:6px;margin-bottom:14px;justify-content:center">
+    <button class="pill" onclick="sniperAdjust(-100)">-$100</button>
+    <button class="pill" onclick="sniperAdjust(-10)">-$10</button>
+    <button class="pill" onclick="sniperAdjust(-1)">-$1</button>
+    <button class="pill" onclick="sniperSetCurrent()">Current</button>
+    <button class="pill" onclick="sniperAdjust(1)">+$1</button>
+    <button class="pill" onclick="sniperAdjust(10)">+$10</button>
+    <button class="pill" onclick="sniperAdjust(100)">+$100</button>
+  </div>
+
+  <!-- Fire button -->
+  <button class="btn-sniper fire" id="btn-sniper-fire" onclick="sniperFire()">
+    Submit Prediction — $5 Entry
+  </button>
+
+  <!-- Active rounds -->
+  <div class="section-title" style="margin-top:20px">Active Rounds</div>
+  <div id="sniper-active-rounds"><div class="empty">No active rounds — create one!</div></div>
+
+  <!-- Create round button -->
+  <button class="btn-sniper" style="background:var(--surface);color:var(--accent);border:1px solid var(--accent);margin-top:10px"
+          onclick="sniperCreateRound()">
+    Create New Round
+  </button>
+
+  <!-- Results (shown after settlement) -->
+  <div class="section-title" id="sniper-results-title" style="display:none">Results</div>
+  <div id="sniper-results"></div>
+
+  <!-- Sniper leaderboard -->
+  <div class="section-title" style="margin-top:20px">Top Snipers</div>
+  <div id="sniper-lb"><div class="empty">No sniper data yet</div></div>
 </div>
 
 <!-- Charts Tab -->
@@ -455,9 +567,10 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const tabs = ['trade', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
+  const tabs = ['trade', 'sniper', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
   const idx = tabs.indexOf(name);
   document.querySelectorAll('.tab-btn')[idx].classList.add('active');
+  if (name === 'sniper') initSniper();
   if (name === 'charts') initCharts();
   if (name === 'orderflow') initOrderFlow();
   if (name === 'liquidity') initLiquidity();
@@ -884,6 +997,275 @@ function handleLiveTrade(trade) {
   while (feed.children.length > MAX_FEED_ITEMS) {
     feed.removeChild(feed.lastChild);
   }
+}
+
+// --- Sniper Game ---
+let sniperSymbol = 'BTC-USD';
+let sniperRoundId = null;
+let sniperPollInterval = null;
+let sniperInitialized = false;
+
+function setSniperSymbol(s, el) {
+  sniperSymbol = s;
+  activatePill(el);
+  sniperUpdateLivePrice();
+}
+
+function initSniper() {
+  if (!sniperInitialized) {
+    sniperInitialized = true;
+  }
+  sniperUpdateLivePrice();
+  sniperFetchActive();
+  sniperFetchLeaderboard();
+}
+
+function sniperUpdateLivePrice() {
+  // Use current market data to show live price in scope
+  const prices = { 'BTC-USD': 69425, 'ETH-USD': 3521, 'SOL-USD': 187 };
+  const base = market.price || market.bulk_price || prices[sniperSymbol] || 0;
+  const el = document.getElementById('sniper-live');
+  el.textContent = 'LIVE: $' + base.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Auto-fill input if empty
+  const input = document.getElementById('sniper-price-input');
+  if (!input.value) {
+    input.value = base.toFixed(2);
+    sniperUpdateTarget();
+  }
+}
+
+function sniperUpdateTarget() {
+  const val = parseFloat(document.getElementById('sniper-price-input').value) || 0;
+  document.getElementById('sniper-target-price').textContent = '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Update target display as user types
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('sniper-price-input');
+  if (inp) inp.addEventListener('input', sniperUpdateTarget);
+});
+
+function sniperAdjust(delta) {
+  const inp = document.getElementById('sniper-price-input');
+  const val = parseFloat(inp.value) || 0;
+  inp.value = (val + delta).toFixed(2);
+  sniperUpdateTarget();
+}
+
+function sniperSetCurrent() {
+  const prices = { 'BTC-USD': 69425, 'ETH-USD': 3521, 'SOL-USD': 187 };
+  const base = market.price || market.bulk_price || prices[sniperSymbol] || 0;
+  document.getElementById('sniper-price-input').value = base.toFixed(2);
+  sniperUpdateTarget();
+}
+
+async function sniperCreateRound() {
+  if (!wallet) { showToast('Connect wallet first', 'error'); return; }
+  try {
+    const res = await fetch(API + '/api/hb/sniper/create', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: sniperSymbol, entry_fee: 5, duration_sec: 300 })
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    sniperRoundId = data.round_id;
+    showToast('Round #' + data.round_id + ' created!', 'success');
+    sniperFetchActive();
+    sniperStartPolling(data.round_id);
+  } catch (e) {
+    // Demo mode
+    sniperRoundId = 'demo-' + Date.now();
+    showToast('Round created (demo)', 'info');
+    sniperShowDemoRound();
+  }
+}
+
+async function sniperFire() {
+  if (!wallet) { showToast('Connect wallet first', 'error'); return; }
+  const price = parseFloat(document.getElementById('sniper-price-input').value);
+  if (!price || price <= 0) { showToast('Enter a price prediction', 'error'); return; }
+
+  if (!sniperRoundId) {
+    showToast('Join or create a round first', 'error'); return;
+  }
+
+  try {
+    const res = await fetch(API + '/api/hb/sniper/' + sniperRoundId + '/predict', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet: wallet, price: price })
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Failed'); }
+    const data = await res.json();
+    showToast('Prediction locked: $' + price.toLocaleString(), 'success');
+    document.getElementById('btn-sniper-fire').disabled = true;
+    document.getElementById('btn-sniper-fire').textContent = 'Prediction Submitted';
+    sniperFetchActive();
+  } catch (e) {
+    showToast('Prediction submitted (demo): $' + price.toLocaleString(), 'info');
+    document.getElementById('btn-sniper-fire').disabled = true;
+    document.getElementById('btn-sniper-fire').textContent = 'Prediction Submitted';
+  }
+}
+
+function sniperStartPolling(roundId) {
+  if (sniperPollInterval) clearInterval(sniperPollInterval);
+  sniperPollInterval = setInterval(() => sniperPollRound(roundId), 2000);
+}
+
+async function sniperPollRound(roundId) {
+  try {
+    const res = await fetch(API + '/api/hb/sniper/' + roundId);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    // Update timer
+    const timer = document.getElementById('sniper-timer');
+    const remaining = data.time_remaining_sec || 0;
+    const min = Math.floor(remaining / 60);
+    const sec = Math.floor(remaining % 60);
+    timer.textContent = min + ':' + sec.toString().padStart(2, '0');
+    timer.className = remaining < 30 ? 'sniper-timer urgent' : 'sniper-timer';
+
+    // Update player count
+    document.getElementById('sniper-players').textContent = (data.player_count || 0) + ' snipers';
+
+    // If settled, show results
+    if (data.status === 'settled') {
+      clearInterval(sniperPollInterval);
+      sniperShowResults(data);
+    }
+  } catch (e) {}
+}
+
+function sniperShowResults(data) {
+  document.getElementById('sniper-results-title').style.display = 'block';
+  const el = document.getElementById('sniper-results');
+  const preds = data.predictions || [];
+
+  let html = '<div style="text-align:center;padding:12px;font-size:.85rem;color:var(--text2);margin-bottom:10px">';
+  html += 'Actual Price: <span style="color:var(--accent);font-weight:800;font-size:1.1rem;font-family:monospace">$' +
+    (data.actual_price || 0).toLocaleString('en-US', {minimumFractionDigits: 2}) + '</span>';
+  html += ' | Prize Pool: <span style="color:var(--accent);font-weight:700">$' + (data.prize_pool_usd || 0).toFixed(2) + '</span>';
+  html += '</div>';
+
+  preds.forEach((p, i) => {
+    const isWinner = p.payout_usd > 0;
+    const tierClass = 'tier-' + (p.accuracy_tier || 'miss');
+    const tierEmoji = { perfect: '\\u2B50', sniper: '\\uD83C\\uDFAF', sharp: '\\uD83D\\uDD25', close: '\\uD83D\\uDC4C', miss: '\\u274C' };
+    const emoji = tierEmoji[p.accuracy_tier] || '\\u274C';
+
+    html += '<div class="sniper-result ' + (isWinner ? 'winner' : '') + '">';
+    html += '<div class="result-rank">#' + p.rank + '</div>';
+    html += '<div class="result-info">';
+    html += '<div class="result-name">' + (p.username || 'Player') + '</div>';
+    html += '<div class="result-pred">Predicted: $' + (p.predicted_price || 0).toLocaleString('en-US', {minimumFractionDigits: 2}) +
+      ' | $' + (p.distance_usd || 0).toFixed(2) + ' off</div>';
+    html += '</div>';
+    html += '<div class="result-accuracy">';
+    if (isWinner) html += '<div class="result-payout">+$' + p.payout_usd.toFixed(2) + '</div>';
+    html += '<div class="result-tier ' + tierClass + '">' + (p.accuracy_tier || 'miss').toUpperCase() + '</div>';
+    html += '</div></div>';
+  });
+
+  el.innerHTML = html;
+
+  // Reset fire button
+  document.getElementById('btn-sniper-fire').disabled = false;
+  document.getElementById('btn-sniper-fire').textContent = 'Submit Prediction \u2014 $5 Entry';
+  sniperRoundId = null;
+}
+
+async function sniperFetchActive() {
+  try {
+    const res = await fetch(API + '/api/hb/sniper/active');
+    if (!res.ok) throw new Error();
+    const rounds = await res.json();
+    renderSniperRounds(rounds);
+  } catch (e) {
+    sniperShowDemoRound();
+  }
+}
+
+function renderSniperRounds(rounds) {
+  const el = document.getElementById('sniper-active-rounds');
+  if (!rounds || !rounds.length) {
+    el.innerHTML = '<div class="empty">No active rounds \u2014 create one!</div>';
+    return;
+  }
+  el.innerHTML = rounds.map(r => {
+    const remaining = r.time_remaining_sec || 0;
+    const min = Math.floor(remaining / 60);
+    const sec = Math.floor(remaining % 60);
+    return '<div class="sniper-round-card" onclick="sniperJoinRound(' + r.round_id + ')">' +
+      '<div class="round-header">' +
+      '<span class="round-symbol">' + r.symbol + ' #' + r.round_id + '</span>' +
+      '<span class="round-status ' + r.status + '">' + r.status.toUpperCase() + '</span>' +
+      '</div>' +
+      '<div class="round-meta">' +
+      '<span>' + r.player_count + ' players</span>' +
+      '<span>Pot: $' + (r.pot_usd || 0).toFixed(2) + '</span>' +
+      '<span>' + min + ':' + sec.toString().padStart(2, '0') + ' left</span>' +
+      '</div></div>';
+  }).join('');
+}
+
+function sniperJoinRound(roundId) {
+  sniperRoundId = roundId;
+  sniperStartPolling(roundId);
+  showToast('Joined round #' + roundId, 'info');
+  document.getElementById('sniper-price-input').focus();
+}
+
+function sniperShowDemoRound() {
+  const el = document.getElementById('sniper-active-rounds');
+  el.innerHTML = '<div class="sniper-round-card">' +
+    '<div class="round-header">' +
+    '<span class="round-symbol">' + sniperSymbol + ' (Demo)</span>' +
+    '<span class="round-status open">OPEN</span>' +
+    '</div>' +
+    '<div class="round-meta">' +
+    '<span>3 players</span><span>Pot: $15.00</span><span>4:32 left</span>' +
+    '</div></div>';
+}
+
+async function sniperFetchLeaderboard() {
+  try {
+    const res = await fetch(API + '/api/hb/sniper/leaderboard');
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    renderSniperLb(data);
+  } catch (e) {
+    renderSniperLb(generateDemoSniperLb());
+  }
+}
+
+function generateDemoSniperLb() {
+  return [
+    { username: 'SharpShooter', total_winnings: 342.50, first_places: 12, rounds_played: 45, avg_accuracy: 0.038 },
+    { username: 'PriceWhisper', total_winnings: 218.00, first_places: 8, rounds_played: 38, avg_accuracy: 0.054 },
+    { username: 'BullseyeBob', total_winnings: 156.75, first_places: 5, rounds_played: 30, avg_accuracy: 0.071 },
+    { username: 'SolSniper', total_winnings: 89.25, first_places: 3, rounds_played: 22, avg_accuracy: 0.092 },
+    { username: 'ETHEagle', total_winnings: 67.00, first_places: 2, rounds_played: 18, avg_accuracy: 0.105 },
+  ];
+}
+
+function renderSniperLb(data) {
+  const el = document.getElementById('sniper-lb');
+  if (!data || !data.length) { el.innerHTML = '<div class="empty">No sniper data yet</div>'; return; }
+  el.innerHTML = data.map((d, i) => {
+    const rank = i + 1;
+    const medal = rank === 1 ? '\\uD83E\\uDD47' : rank === 2 ? '\\uD83E\\uDD48' : rank === 3 ? '\\uD83E\\uDD49' : '#' + rank;
+    return '<div class="sniper-result ' + (rank <= 3 ? 'winner' : '') + '">' +
+      '<div class="result-rank">' + medal + '</div>' +
+      '<div class="result-info">' +
+      '<div class="result-name">' + d.username + '</div>' +
+      '<div class="result-pred">' + (d.rounds_played || 0) + ' rounds | ' +
+        (d.first_places || 0) + ' wins | avg ' + ((d.avg_accuracy || 0)).toFixed(3) + '%</div>' +
+      '</div>' +
+      '<div class="result-payout">$' + (d.total_winnings || 0).toFixed(2) + '</div>' +
+      '</div>';
+  }).join('');
 }
 
 // --- Order Flow ---
