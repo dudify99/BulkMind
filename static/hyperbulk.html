@@ -142,6 +142,29 @@ a{color:var(--accent);text-decoration:none}
 .ws-status.connected{color:var(--accent);background:rgba(0,255,136,.1)}
 .ws-status.disconnected{color:var(--red);background:rgba(255,68,68,.1)}
 
+/* Battle Royale */
+.br-arena{position:relative;width:100%;aspect-ratio:1.4;max-height:260px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:14px;display:flex;align-items:center;justify-content:center}
+.br-circle{position:absolute;border:2px solid var(--red);border-radius:50%;transition:all 1s ease;opacity:.4}
+.br-circle-inner{width:70%;height:70%;border-color:var(--red);opacity:.6}
+.br-circle-core{width:40%;height:40%;border-color:var(--red);opacity:.8}
+.br-alive-count{font-size:3rem;font-weight:800;font-family:monospace;z-index:2}
+.br-alive-label{font-size:.75rem;color:var(--text2);z-index:2;margin-top:-4px}
+.br-sl-badge{position:absolute;bottom:10px;right:14px;font-size:.72rem;color:var(--red);font-family:monospace;font-weight:700}
+.br-time-badge{position:absolute;top:10px;right:14px;font-size:.9rem;color:var(--accent);font-family:monospace;font-weight:700}
+.br-pot-badge{position:absolute;top:10px;left:14px;font-size:.75rem;color:var(--text2)}
+
+.br-elim-feed{max-height:180px;overflow-y:auto;margin-bottom:14px}
+.br-elim-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);font-size:.78rem;animation:feedIn .3s ease}
+.br-elim-item .elim-skull{color:var(--red);font-size:1rem;min-width:24px}
+.br-elim-item .elim-name{font-weight:700;flex:1;margin:0 8px}
+.br-elim-item .elim-rank{color:var(--text2);font-family:monospace}
+.br-elim-item .elim-time{color:var(--text2);font-size:.7rem}
+
+.br-player-list{max-height:200px;overflow-y:auto}
+.br-player{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;border-bottom:1px solid var(--border);font-size:.78rem}
+.br-player.eliminated{opacity:.4;text-decoration:line-through}
+.br-player.winner{color:var(--accent);font-weight:700}
+
 /* Flip It */
 .flip-coin{width:140px;height:140px;margin:20px auto;position:relative;perspective:600px}
 .flip-coin-inner{width:100%;height:100%;border-radius:50%;position:relative;transform-style:preserve-3d;transition:transform .8s cubic-bezier(.4,0,.2,1)}
@@ -294,6 +317,7 @@ a{color:var(--accent);text-decoration:none}
   <button class="tab-btn active" onclick="switchTab('trade')">Trade</button>
   <button class="tab-btn" onclick="switchTab('flipit')">Flip It</button>
   <button class="tab-btn" onclick="switchTab('sniper')">Sniper</button>
+  <button class="tab-btn" onclick="switchTab('br')">Battle</button>
   <button class="tab-btn" onclick="switchTab('charts')">Charts</button>
   <button class="tab-btn" onclick="switchTab('orderflow')">Order Flow</button>
   <button class="tab-btn" onclick="switchTab('liquidity')">Liquidity</button>
@@ -459,6 +483,47 @@ a{color:var(--accent);text-decoration:none}
   <!-- Sniper leaderboard -->
   <div class="section-title" style="margin-top:20px">Top Snipers</div>
   <div id="sniper-lb"><div class="empty">No sniper data yet</div></div>
+</div>
+
+<!-- Battle Royale Tab -->
+<div class="tab-content" id="tab-br">
+  <div class="pills" id="br-symbol-pills">
+    <div class="pill active" onclick="setBrSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setBrSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setBrSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+
+  <!-- Arena visualization -->
+  <div class="br-arena" id="br-arena">
+    <div class="br-circle" id="br-circle-outer" style="width:90%;height:90%"></div>
+    <div class="br-circle br-circle-inner" id="br-circle-mid"></div>
+    <div class="br-circle br-circle-core" id="br-circle-core"></div>
+    <div style="text-align:center;z-index:2">
+      <div class="br-alive-count" id="br-alive">0</div>
+      <div class="br-alive-label">ALIVE</div>
+    </div>
+    <div class="br-pot-badge" id="br-pot">Pot: $0</div>
+    <div class="br-time-badge" id="br-time">--:--</div>
+    <div class="br-sl-badge" id="br-sl">SL: -2.00%</div>
+  </div>
+
+  <!-- Join / Create buttons -->
+  <div style="display:flex;gap:10px;margin-bottom:14px">
+    <button class="btn-sniper fire" style="flex:1" id="btn-br-join" onclick="brJoin()">JOIN BATTLE — $10</button>
+    <button class="btn-sniper" style="flex:0;padding:16px 20px;background:var(--surface);color:var(--accent);border:1px solid var(--accent)" onclick="brCreate()">+</button>
+  </div>
+
+  <!-- Elimination feed -->
+  <div class="section-title">Elimination Feed</div>
+  <div class="br-elim-feed" id="br-elim-feed"><div class="empty">Waiting for battle to start...</div></div>
+
+  <!-- Player list -->
+  <div class="section-title">Players</div>
+  <div class="br-player-list" id="br-players"><div class="empty">No players yet</div></div>
+
+  <!-- Active games -->
+  <div class="section-title" style="margin-top:16px">Active Battles</div>
+  <div id="br-active-games"><div class="empty">No active battles</div></div>
 </div>
 
 <!-- Charts Tab -->
@@ -666,11 +731,12 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const tabs = ['trade', 'flipit', 'sniper', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
+  const tabs = ['trade', 'flipit', 'sniper', 'br', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
   const idx = tabs.indexOf(name);
   document.querySelectorAll('.tab-btn')[idx].classList.add('active');
   if (name === 'flipit') initFlip();
   if (name === 'sniper') initSniper();
+  if (name === 'br') initBR();
   if (name === 'charts') initCharts();
   if (name === 'orderflow') initOrderFlow();
   if (name === 'liquidity') initLiquidity();
@@ -1097,6 +1163,161 @@ function handleLiveTrade(trade) {
   while (feed.children.length > MAX_FEED_ITEMS) {
     feed.removeChild(feed.lastChild);
   }
+}
+
+// --- Battle Royale ---
+let brSymbol = 'BTC-USD';
+let brGameId = null;
+let brPollInterval = null;
+
+function setBrSymbol(s, el) { brSymbol = s; activatePill(el); }
+
+function initBR() { brFetchActive(); }
+
+async function brCreate() {
+  if (!wallet) { showToast('Connect wallet first', 'error'); return; }
+  try {
+    const res = await fetch(API + '/api/hb/br/create', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: brSymbol, direction: 'long', entry_fee: 10 })
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    brGameId = data.game_id;
+    showToast('Battle #' + data.game_id + ' created!', 'success');
+    brFetchActive();
+  } catch (e) {
+    brGameId = 'demo';
+    showToast('Battle created (demo)', 'info');
+    brShowDemo();
+  }
+}
+
+async function brJoin() {
+  if (!wallet) { showToast('Connect wallet first', 'error'); return; }
+  if (!brGameId) {
+    await brCreate();
+    return;
+  }
+  try {
+    const res = await fetch(API + '/api/hb/br/' + brGameId + '/join', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet })
+    });
+    if (!res.ok) throw new Error();
+    showToast('Joined battle!', 'success');
+    brStartPolling(brGameId);
+  } catch (e) {
+    showToast('Joined (demo)', 'info');
+    brShowDemo();
+  }
+}
+
+function brStartPolling(gameId) {
+  if (brPollInterval) clearInterval(brPollInterval);
+  brPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch(API + '/api/hb/br/' + gameId);
+      if (!res.ok) return;
+      const data = await res.json();
+      brRenderState(data);
+      if (data.status === 'settled') {
+        clearInterval(brPollInterval);
+        showToast('Battle over!', 'info');
+      }
+    } catch (e) {}
+  }, 1500);
+}
+
+function brRenderState(data) {
+  // Alive count
+  document.getElementById('br-alive').textContent = data.alive_count || 0;
+  document.getElementById('br-pot').textContent = 'Pot: $' + (data.pot_usd || 0).toFixed(2);
+  document.getElementById('br-sl').textContent = 'SL: -' + (data.current_sl_pct || 2).toFixed(2) + '%';
+
+  // Timer
+  const elapsed = data.elapsed_sec || 0;
+  const min = Math.floor(elapsed / 60);
+  const sec = Math.floor(elapsed % 60);
+  document.getElementById('br-time').textContent = min + ':' + sec.toString().padStart(2, '0');
+
+  // Shrinking circles (visual — smaller as SL tightens)
+  const slRatio = (data.current_sl_pct || 2) / 2;  // Ratio of current to initial
+  const outerSize = 90 * slRatio;
+  document.getElementById('br-circle-outer').style.width = outerSize + '%';
+  document.getElementById('br-circle-outer').style.height = outerSize + '%';
+
+  // Elimination feed
+  const elimFeed = document.getElementById('br-elim-feed');
+  const elims = data.eliminations || [];
+  if (elims.length) {
+    elimFeed.innerHTML = elims.slice(-10).reverse().map(e => {
+      const survival = e.survival_sec ? e.survival_sec.toFixed(0) + 's' : '';
+      return '<div class="br-elim-item">' +
+        '<span class="elim-skull">\u{1F480}</span>' +
+        '<span class="elim-name">' + e.username + '</span>' +
+        '<span class="elim-rank">#' + e.rank + '</span>' +
+        '<span class="elim-time">' + survival + '</span>' +
+        '</div>';
+    }).join('');
+  }
+
+  // Player list
+  const players = data.players || [];
+  const plEl = document.getElementById('br-players');
+  plEl.innerHTML = players.map(p => {
+    let cls = 'br-player';
+    if (p.status === 'eliminated') cls += ' eliminated';
+    if (p.status === 'winner') cls += ' winner';
+    const payout = p.payout_usd > 0 ? '+$' + p.payout_usd.toFixed(2) : '';
+    return '<div class="' + cls + '">' +
+      '<span>' + p.username + '</span>' +
+      '<span style="color:var(--text2)">' + p.status + '</span>' +
+      '<span style="font-family:monospace;color:var(--accent)">' + payout + '</span>' +
+      '</div>';
+  }).join('');
+}
+
+function brShowDemo() {
+  brRenderState({
+    alive_count: 47, pot_usd: 500, current_sl_pct: 1.5,
+    elapsed_sec: 180, shrink_count: 6,
+    eliminations: [
+      { username: 'DegenApe', rank: 50, survival_sec: 30 },
+      { username: 'PaperHands', rank: 49, survival_sec: 45 },
+      { username: 'LiqHunter', rank: 48, survival_sec: 62 },
+    ],
+    players: [
+      { username: 'You', status: 'alive', payout_usd: 0 },
+      { username: 'CryptoKing', status: 'alive', payout_usd: 0 },
+      { username: 'SolMaxi', status: 'alive', payout_usd: 0 },
+      { username: 'DegenApe', status: 'eliminated', payout_usd: 0 },
+    ],
+  });
+}
+
+async function brFetchActive() {
+  try {
+    const res = await fetch(API + '/api/hb/br/active');
+    if (!res.ok) throw new Error();
+    const games = await res.json();
+    const el = document.getElementById('br-active-games');
+    if (!games || !games.length) {
+      el.innerHTML = '<div class="empty">No active battles \u2014 create one!</div>';
+      return;
+    }
+    el.innerHTML = games.map(g => {
+      return '<div class="sniper-round-card" onclick="brGameId=' + g.game_id + ';brStartPolling(' + g.game_id + ')">' +
+        '<div class="round-header">' +
+        '<span class="round-symbol">' + g.symbol + ' #' + g.game_id + '</span>' +
+        '<span class="round-status ' + g.status + '">' + g.status.toUpperCase() + '</span></div>' +
+        '<div class="round-meta">' +
+        '<span>' + g.alive_count + '/' + g.player_count + ' alive</span>' +
+        '<span>Pot: $' + (g.pot_usd || 0).toFixed(0) + '</span>' +
+        '<span>SL: -' + (g.current_sl_pct || 2).toFixed(1) + '%</span>' +
+        '</div></div>';
+    }).join('');
+  } catch (e) {}
 }
 
 // --- Flip It Game ---

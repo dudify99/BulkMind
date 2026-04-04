@@ -396,6 +396,44 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_flip_user ON flip_games(user_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_flip_status ON flip_games(status)")
 
+    # ── Battle Royale Tables ─────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS br_games (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol       TEXT NOT NULL,
+            direction    TEXT NOT NULL DEFAULT 'long',
+            entry_fee    REAL NOT NULL DEFAULT 10,
+            rake_pct     REAL NOT NULL DEFAULT 10,
+            player_count INTEGER DEFAULT 0,
+            alive_count  INTEGER DEFAULT 0,
+            pot_usd      REAL DEFAULT 0,
+            prize_pool   REAL DEFAULT 0,
+            rake_usd     REAL DEFAULT 0,
+            entry_price  REAL,
+            status       TEXT DEFAULT 'lobby',
+            created_at   TEXT NOT NULL,
+            started_at   TEXT,
+            ended_at     TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS br_players (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id     INTEGER NOT NULL,
+            user_id     INTEGER NOT NULL,
+            status      TEXT DEFAULT 'alive',
+            entry_price REAL,
+            elim_price  REAL,
+            rank        INTEGER,
+            payout_usd  REAL DEFAULT 0,
+            survival_sec REAL DEFAULT 0,
+            joined_at   TEXT NOT NULL,
+            UNIQUE(game_id, user_id)
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_br_games_status ON br_games(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_br_players_game ON br_players(game_id)")
+
     # ── Indexes ──────────────────────────────────────────────
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_ts ON observed_trades(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_maker ON observed_trades(maker)")
@@ -1254,6 +1292,73 @@ def hb_get_open_trades(user_id: int = None) -> list:
         rows = conn.execute(
             "SELECT * FROM hb_trades WHERE status='OPEN' ORDER BY opened_at DESC"
         ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ── Battle Royale Helpers ─────────────────────────────────────
+
+def br_create_game(symbol: str, direction: str, entry_fee: float,
+                   rake_pct: float = 10.0) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO br_games (symbol, direction, entry_fee, rake_pct, status, created_at) VALUES (?,?,?,?,?,?)",
+        (symbol, direction, entry_fee, rake_pct, "lobby", datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    gid = cur.lastrowid
+    conn.close()
+    return gid
+
+
+def br_join_game(game_id: int, user_id: int):
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO br_players (game_id, user_id, status, joined_at) VALUES (?,?,?,?)",
+        (game_id, user_id, "alive", datetime.utcnow().isoformat())
+    )
+    conn.execute(
+        "UPDATE br_games SET player_count = (SELECT COUNT(*) FROM br_players WHERE game_id=?) WHERE id=?",
+        (game_id, game_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def br_settle_game(game_id: int, entry_price: float, pot_usd: float,
+                   prize_pool: float, rake_usd: float, players: list):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE br_games SET status='settled', entry_price=?, pot_usd=?,
+           prize_pool=?, rake_usd=?, ended_at=? WHERE id=?""",
+        (entry_price, pot_usd, prize_pool, rake_usd,
+         datetime.utcnow().isoformat(), game_id)
+    )
+    for p in players:
+        conn.execute(
+            """UPDATE br_players SET status=?, rank=?, payout_usd=?,
+               survival_sec=?, elim_price=? WHERE game_id=? AND user_id=?""",
+            (p["status"], p.get("rank", 0), p.get("payout_usd", 0),
+             p.get("survival_sec", 0), p.get("elim_price", 0),
+             game_id, p["user_id"])
+        )
+    conn.commit()
+    conn.close()
+
+
+def br_get_leaderboard(limit: int = 50) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT p.user_id, u.username, u.wallet,
+                  SUM(p.payout_usd) as total_winnings,
+                  COUNT(*) as games_played,
+                  SUM(CASE WHEN p.rank=1 THEN 1 ELSE 0 END) as victories,
+                  AVG(p.survival_sec) as avg_survival
+           FROM br_players p JOIN hb_users u ON p.user_id = u.id
+           WHERE p.status IN ('winner','eliminated')
+           GROUP BY p.user_id ORDER BY total_winnings DESC LIMIT ?""",
+        (limit,)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

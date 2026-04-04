@@ -23,6 +23,7 @@ from db import (
     sniper_get_round, sniper_get_leaderboard,
     flip_create, flip_start, flip_settle, flip_get_streak,
     flip_get_history, flip_get_stats, flip_get_leaderboard,
+    br_create_game, br_join_game, br_settle_game, br_get_leaderboard,
 )
 from reporter import Reporter
 from config import DASHBOARD_HOST, DASHBOARD_PORT, BREAKOUT_PAPER_MODE, BULK_API_BASE, HL_API_BASE
@@ -83,6 +84,13 @@ class Dashboard:
         self.app.router.add_get("/api/hb/market", self._hb_market)
         self.app.router.add_get("/api/hb/candles", self._hb_candles)
         self.app.router.add_get("/api/hb/pnl-history/{wallet}", self._hb_pnl_history)
+        # ── Battle Royale Routes ──
+        self.app.router.add_post("/api/hb/br/create", self._br_create)
+        self.app.router.add_post("/api/hb/br/{game_id}/join", self._br_join)
+        self.app.router.add_get("/api/hb/br/{game_id}", self._br_state)
+        self.app.router.add_post("/api/hb/br/{game_id}/start", self._br_start)
+        self.app.router.add_get("/api/hb/br/active", self._br_active)
+        self.app.router.add_get("/api/hb/br/leaderboard", self._br_leaderboard)
         # ── Flip It Game Routes ──
         self.app.router.add_post("/api/hb/flip/start", self._flip_start)
         self.app.router.add_get("/api/hb/flip/{game_id}", self._flip_state)
@@ -737,6 +745,143 @@ class Dashboard:
             "spread": spreads,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
         })
+
+    # ── Battle Royale Handlers ─────────────────────────────
+
+    async def _br_create(self, request):
+        """Create a Battle Royale lobby."""
+        try:
+            from br_engine import battle_royale, BRConfig
+            body = await request.json()
+            symbol = body.get("symbol", "BTC-USD")
+            direction = body.get("direction", "long")
+            entry_fee = float(body.get("entry_fee", 10.0))
+
+            config = BRConfig(symbol=symbol, direction=direction, entry_fee=entry_fee)
+            game = battle_royale.create_game(config)
+            db_id = br_create_game(symbol, direction, entry_fee)
+            game.game_id = db_id
+            battle_royale.games[db_id] = game
+
+            return web.json_response(battle_royale.get_state(db_id))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _br_join(self, request):
+        """Join a Battle Royale lobby."""
+        try:
+            from br_engine import battle_royale
+            game_id = int(request.match_info["game_id"])
+            body = await request.json()
+            wallet = body.get("wallet")
+
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+
+            error = battle_royale.join_game(
+                game_id, user["id"], wallet,
+                user.get("username", wallet[:8]),
+            )
+            if error:
+                return web.json_response({"error": error}, status=400)
+
+            br_join_game(game_id, user["id"])
+
+            # Broadcast join event
+            await self.reporter._ws_broadcast("br_event", json.dumps({
+                "type": "player_joined",
+                "game_id": game_id,
+                "username": user.get("username", wallet[:8]),
+                "player_count": len(battle_royale.games[game_id].players),
+            }))
+
+            return web.json_response(battle_royale.get_state(game_id))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _br_start(self, request):
+        """Start a Battle Royale game (admin or auto when lobby full/timeout)."""
+        try:
+            from br_engine import battle_royale
+            game_id = int(request.match_info["game_id"])
+            game = battle_royale.games.get(game_id)
+            if not game:
+                return web.json_response({"error": "Game not found"}, status=404)
+
+            entry_price = await self._get_price(game.config.symbol, "bulk")
+            if not entry_price:
+                return web.json_response({"error": "Could not fetch price"}, status=502)
+
+            battle_royale.start_game(game_id, entry_price)
+
+            await self.reporter._ws_broadcast("br_event", json.dumps({
+                "type": "game_started",
+                "game_id": game_id,
+                "entry_price": entry_price,
+                "player_count": len(game.players),
+            }))
+
+            return web.json_response(battle_royale.get_state(game_id))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _br_state(self, request):
+        """Get Battle Royale game state. Auto-ticks with current price."""
+        try:
+            from br_engine import battle_royale
+            game_id = int(request.match_info["game_id"])
+            game = battle_royale.games.get(game_id)
+            if not game:
+                return web.json_response({"error": "Game not found"}, status=404)
+
+            # Tick with live price
+            if game.status == "live":
+                price = await self._get_price(game.config.symbol, "bulk")
+                if price:
+                    prev_alive = len([p for p in game.players if p.status == "alive"])
+                    battle_royale.tick(game_id, price)
+                    new_alive = len([p for p in game.players if p.status == "alive"])
+
+                    # Broadcast eliminations
+                    if new_alive < prev_alive:
+                        for elim in game.eliminations[-(prev_alive - new_alive):]:
+                            await self.reporter._ws_broadcast("br_event", json.dumps({
+                                "type": "elimination",
+                                "game_id": game_id,
+                                **elim,
+                            }))
+
+                    # If settled, persist
+                    if game.status == "settled":
+                        br_settle_game(
+                            game_id, game.entry_price, game.pot_usd,
+                            game.prize_pool_usd, game.rake_usd,
+                            [{"user_id": p.user_id, "status": p.status,
+                              "rank": p.rank, "payout_usd": p.payout_usd,
+                              "survival_sec": p.survival_sec,
+                              "elim_price": p.eliminated_price}
+                             for p in game.players]
+                        )
+
+            return web.json_response(battle_royale.get_state(game_id))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _br_active(self, request):
+        """List active Battle Royale games."""
+        try:
+            from br_engine import battle_royale
+            return web.json_response(battle_royale.get_active_games())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _br_leaderboard(self, request):
+        """Battle Royale leaderboard."""
+        try:
+            return web.json_response(br_get_leaderboard())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     # ── Flip It Game Handlers ────────────────────────────────
 
