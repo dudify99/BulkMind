@@ -84,6 +84,14 @@ class Dashboard:
         self.app.router.add_get("/api/hb/market", self._hb_market)
         self.app.router.add_get("/api/hb/candles", self._hb_candles)
         self.app.router.add_get("/api/hb/pnl-history/{wallet}", self._hb_pnl_history)
+        # ── Signal Engine + Alpha Rush Routes ──
+        self.app.router.add_get("/api/hb/signals", self._hb_signals)
+        self.app.router.add_get("/api/hb/signals/backtest", self._hb_signals_backtest)
+        self.app.router.add_post("/api/hb/rush/start", self._rush_start)
+        self.app.router.add_get("/api/hb/rush/{game_id}", self._rush_state)
+        self.app.router.add_post("/api/hb/rush/{game_id}/execute", self._rush_execute)
+        self.app.router.add_post("/api/hb/rush/{game_id}/skip", self._rush_skip)
+        self.app.router.add_get("/api/hb/rush/history/{wallet}", self._rush_history)
         # ── Battle Royale Routes ──
         self.app.router.add_post("/api/hb/br/create", self._br_create)
         self.app.router.add_post("/api/hb/br/{game_id}/join", self._br_join)
@@ -745,6 +753,140 @@ class Dashboard:
             "spread": spreads,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
         })
+
+    # ── Signal Engine + Alpha Rush Handlers ─────────────────
+
+    async def _hb_signals(self, request):
+        """Get current AI signals for a symbol. <20ms response."""
+        from signal_engine import signals
+        symbol = request.query.get("symbol", "BTC-USD")
+        limit = int(request.query.get("limit", "5"))
+        return web.json_response(signals.get_signals(symbol, limit))
+
+    async def _hb_signals_backtest(self, request):
+        """Get backtest results per strategy."""
+        from signal_engine import signals
+        symbol = request.query.get("symbol", "BTC-USD")
+        return web.json_response(signals.get_backtest(symbol))
+
+    async def _rush_start(self, request):
+        """Start an Alpha Rush game — 5 rounds of AI signals."""
+        try:
+            from rush_engine import rush
+            body = await request.json()
+            wallet = body.get("wallet")
+            symbol = body.get("symbol", "BTC-USD")
+            bet = float(body.get("bet_amount", 5.0))
+            exchange = body.get("exchange", "bulk")
+
+            if not wallet or bet <= 0:
+                return web.json_response({"error": "wallet and positive bet required"}, status=400)
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+
+            game = rush.create_game(user["id"], symbol, exchange, bet)
+            rush.start_game(game.game_id)
+            return web.json_response(rush.to_dict(game))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _rush_state(self, request):
+        """Get Alpha Rush game state. Auto-ticks rounds."""
+        try:
+            from rush_engine import rush
+            game_id = int(request.match_info["game_id"])
+            game = rush.games.get(game_id)
+            if not game:
+                return web.json_response({"error": "Game not found"}, status=404)
+
+            # Tick with current price
+            price = await self._get_price(game.symbol, game.exchange)
+            if price:
+                rush.tick(game_id, price)
+
+            # Auto-advance if between rounds
+            if game.status == "between_rounds":
+                rush.advance_round(game_id)
+
+            return web.json_response(rush.to_dict(game))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _rush_execute(self, request):
+        """Execute the current AI signal (open real position)."""
+        try:
+            from rush_engine import rush
+            game_id = int(request.match_info["game_id"])
+            game = rush.games.get(game_id)
+            if not game:
+                return web.json_response({"error": "Game not found"}, status=404)
+
+            price = await self._get_price(game.symbol, game.exchange)
+            if not price:
+                return web.json_response({"error": "Could not fetch price"}, status=502)
+
+            # Place real order
+            rnd = game.rounds[-1] if game.rounds else None
+            if not rnd:
+                return web.json_response({"error": "No active round"}, status=400)
+
+            direction = rnd.signal.get("direction", "BUY")
+            side = direction
+            size = round(game.per_round * 10 / price, 6)
+            order_id = ""
+
+            executor = self.bulk_executor if game.exchange == "bulk" else self.hl_executor
+            if executor:
+                ex_symbol = game.symbol
+                if game.exchange == "hyperliquid":
+                    from config import HL_SYMBOL_MAP
+                    ex_symbol = HL_SYMBOL_MAP.get(game.symbol, game.symbol)
+                order = await executor.place_order(
+                    symbol=ex_symbol, side=side, price=price,
+                    size=size, order_type="market",
+                )
+                if order:
+                    order_id = order.get("order_id", "")
+                    price = float(order.get("price", price))
+
+            rush.execute_round(game_id, price, order_id)
+            return web.json_response(rush.to_dict(game))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _rush_skip(self, request):
+        """Skip the current AI signal."""
+        try:
+            from rush_engine import rush
+            game_id = int(request.match_info["game_id"])
+            rush.skip_round(game_id)
+            game = rush.games.get(game_id)
+            if not game:
+                return web.json_response({"error": "Game not found"}, status=404)
+            # Auto-advance
+            if game.status == "between_rounds":
+                rush.advance_round(game_id)
+            return web.json_response(rush.to_dict(game))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _rush_history(self, request):
+        """Get Alpha Rush history for a user."""
+        try:
+            from rush_engine import rush
+            wallet = request.match_info["wallet"]
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+            history = [
+                rush.to_dict(g)
+                for g in rush.games.values()
+                if g.user_id == user["id"] and g.status == "finished"
+            ]
+            return web.json_response(history[-20:])
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     # ── Battle Royale Handlers ─────────────────────────────
 

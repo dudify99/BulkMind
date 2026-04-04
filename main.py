@@ -135,8 +135,9 @@ async def hb_pnl_loop(reporter, dashboard):
 
 
 async def hb_analytics_loop(bulk_client, hl_client):
-    """Poll orderbooks, OI, and funding rates every 10s for analytics engine."""
+    """Poll orderbooks, OI, funding, and candles for analytics + signal engine."""
     from analytics import liquidity, derivatives
+    from signal_engine import signals as signal_engine
     from config import WATCHED_SYMBOLS
     while True:
         try:
@@ -160,6 +161,11 @@ async def hb_analytics_loop(bulk_client, hl_client):
                     # HL funding via allMids (already available)
                     hl_funding = 0.0
                     derivatives.record_funding(symbol, bulk_funding, hl_funding)
+
+                # Fetch candles for signal engine (1m candles for Alpha Rush)
+                candles = await bulk_client.get_candles(symbol, interval="1m", limit=200)
+                if candles and len(candles) > 30:
+                    signal_engine.update_candles(symbol, candles)
         except Exception as e:
             print(f"Analytics loop error: {e}")
         await asyncio.sleep(10)

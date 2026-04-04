@@ -142,6 +142,44 @@ a{color:var(--accent);text-decoration:none}
 .ws-status.connected{color:var(--accent);background:rgba(0,255,136,.1)}
 .ws-status.disconnected{color:var(--red);background:rgba(255,68,68,.1)}
 
+/* Alpha Rush */
+.rush-signal-card{background:var(--surface);border:2px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px;transition:border-color .3s}
+.rush-signal-card.buy{border-color:var(--accent)}
+.rush-signal-card.sell{border-color:var(--red)}
+.rush-signal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.rush-signal-strategy{font-size:.9rem;font-weight:700}
+.rush-signal-confidence{font-size:.8rem;font-weight:700;padding:4px 10px;border-radius:12px}
+.rush-signal-confidence.high{color:var(--accent);background:rgba(0,255,136,.1)}
+.rush-signal-confidence.mid{color:#FFC107;background:rgba(255,193,7,.1)}
+.rush-signal-confidence.low{color:var(--red);background:rgba(255,68,68,.1)}
+.rush-signal-direction{font-size:2rem;font-weight:800;text-align:center;margin:8px 0}
+.rush-signal-direction.buy{color:var(--accent)}
+.rush-signal-direction.sell{color:var(--red)}
+.rush-levels{display:flex;justify-content:space-around;margin:12px 0;font-size:.8rem;font-family:monospace}
+.rush-level{text-align:center}
+.rush-level-label{color:var(--text2);font-size:.68rem;text-transform:uppercase}
+.rush-level-value{font-weight:700;margin-top:2px}
+.rush-reason{font-size:.78rem;color:var(--text2);padding:10px 12px;background:var(--bg);border-radius:8px;margin-top:10px;border-left:3px solid var(--accent)}
+.rush-actions{display:flex;gap:10px;margin-top:14px}
+.rush-actions button{flex:1;padding:16px;border:none;border-radius:var(--radius);font-size:1rem;font-weight:800;cursor:pointer}
+.rush-btn-execute{background:var(--accent);color:#000}
+.rush-btn-skip{background:var(--surface);color:var(--text2);border:1px solid var(--border) !important}
+.rush-btn-execute:hover{filter:brightness(1.1)}
+.rush-btn-skip:hover{border-color:var(--text2) !important}
+.rush-progress{display:flex;gap:6px;justify-content:center;margin-bottom:14px}
+.rush-dot{width:36px;height:6px;border-radius:3px;background:var(--border)}
+.rush-dot.active{background:var(--accent)}
+.rush-dot.won{background:var(--accent)}
+.rush-dot.lost{background:var(--red)}
+.rush-dot.skipped{background:var(--text2)}
+.rush-score{text-align:center;margin:10px 0}
+.rush-score-pnl{font-size:1.8rem;font-weight:800;font-family:monospace}
+.rush-score-meta{font-size:.75rem;color:var(--text2)}
+.rush-round-result{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:.8rem}
+.rush-round-emoji{font-size:1.2rem;min-width:28px}
+.rush-round-info{flex:1}
+.rush-round-pnl{font-weight:700;font-family:monospace;min-width:60px;text-align:right}
+
 /* Battle Royale */
 .br-arena{position:relative;width:100%;aspect-ratio:1.4;max-height:260px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:14px;display:flex;align-items:center;justify-content:center}
 .br-circle{position:absolute;border:2px solid var(--red);border-radius:50%;transition:all 1s ease;opacity:.4}
@@ -317,6 +355,7 @@ a{color:var(--accent);text-decoration:none}
   <button class="tab-btn active" onclick="switchTab('trade')">Trade</button>
   <button class="tab-btn" onclick="switchTab('flipit')">Flip It</button>
   <button class="tab-btn" onclick="switchTab('sniper')">Sniper</button>
+  <button class="tab-btn" onclick="switchTab('rush')">Alpha Rush</button>
   <button class="tab-btn" onclick="switchTab('br')">Battle</button>
   <button class="tab-btn" onclick="switchTab('charts')">Charts</button>
   <button class="tab-btn" onclick="switchTab('orderflow')">Order Flow</button>
@@ -483,6 +522,52 @@ a{color:var(--accent);text-decoration:none}
   <!-- Sniper leaderboard -->
   <div class="section-title" style="margin-top:20px">Top Snipers</div>
   <div id="sniper-lb"><div class="empty">No sniper data yet</div></div>
+</div>
+
+<!-- Alpha Rush Tab -->
+<div class="tab-content" id="tab-rush">
+  <div class="pills" id="rush-symbol-pills">
+    <div class="pill active" onclick="setRushSymbol('BTC-USD',this)">BTC-USD</div>
+    <div class="pill" onclick="setRushSymbol('ETH-USD',this)">ETH-USD</div>
+    <div class="pill" onclick="setRushSymbol('SOL-USD',this)">SOL-USD</div>
+  </div>
+
+  <!-- Round progress dots -->
+  <div class="rush-progress" id="rush-progress">
+    <div class="rush-dot"></div><div class="rush-dot"></div><div class="rush-dot"></div>
+    <div class="rush-dot"></div><div class="rush-dot"></div>
+  </div>
+
+  <!-- Score -->
+  <div class="rush-score">
+    <div class="rush-score-pnl" id="rush-pnl">$0.00</div>
+    <div class="rush-score-meta" id="rush-meta">Round 0/5 | AI: 0/0 correct</div>
+  </div>
+
+  <!-- Timer -->
+  <div class="flip-timer" id="rush-timer" style="display:none">60</div>
+
+  <!-- Signal card -->
+  <div id="rush-signal-area">
+    <div style="text-align:center;padding:40px 20px">
+      <div style="font-size:2rem;margin-bottom:10px">🎯</div>
+      <div style="font-size:1rem;font-weight:700;margin-bottom:6px">Alpha Rush</div>
+      <div style="font-size:.8rem;color:var(--text2);margin-bottom:20px">
+        5 rounds × 1 minute. AI gives you a sniper signal each round.<br>
+        Execute or skip. Your PnL is real.
+      </div>
+      <div class="size-row" style="justify-content:center">
+        <input type="number" class="size-input" id="rush-bet-input" placeholder="Stake ($)" value="5" step="1" min="1" style="max-width:120px;text-align:center">
+      </div>
+      <button class="btn-sniper fire" style="margin-top:14px;max-width:300px" onclick="rushStart()">
+        START ALPHA RUSH — $5
+      </button>
+    </div>
+  </div>
+
+  <!-- Round history -->
+  <div class="section-title" id="rush-rounds-title" style="display:none">Round History</div>
+  <div id="rush-rounds"></div>
 </div>
 
 <!-- Battle Royale Tab -->
@@ -731,11 +816,12 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  const tabs = ['trade', 'flipit', 'sniper', 'br', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
+  const tabs = ['trade', 'flipit', 'sniper', 'rush', 'br', 'charts', 'orderflow', 'liquidity', 'deriv', 'mprofile', 'leaderboard', 'portfolio'];
   const idx = tabs.indexOf(name);
   document.querySelectorAll('.tab-btn')[idx].classList.add('active');
   if (name === 'flipit') initFlip();
   if (name === 'sniper') initSniper();
+  if (name === 'rush') initRush();
   if (name === 'br') initBR();
   if (name === 'charts') initCharts();
   if (name === 'orderflow') initOrderFlow();
@@ -1163,6 +1249,195 @@ function handleLiveTrade(trade) {
   while (feed.children.length > MAX_FEED_ITEMS) {
     feed.removeChild(feed.lastChild);
   }
+}
+
+// --- Alpha Rush ---
+let rushSymbol = 'BTC-USD';
+let rushGameId = null;
+let rushPollInterval = null;
+
+function setRushSymbol(s, el) { rushSymbol = s; activatePill(el); }
+function initRush() {}
+
+async function rushStart() {
+  if (!wallet) { showToast('Connect wallet first', 'error'); return; }
+  const bet = parseFloat(document.getElementById('rush-bet-input').value) || 5;
+  try {
+    const res = await fetch(API + '/api/hb/rush/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet, symbol: rushSymbol, bet_amount: bet, exchange: 'bulk' })
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    rushGameId = data.game_id;
+    showToast('Alpha Rush started!', 'success');
+    rushRender(data);
+    rushStartPolling(data.game_id);
+  } catch (e) {
+    rushGameId = 'demo';
+    showToast('Alpha Rush started (demo)', 'info');
+    rushRenderDemo();
+  }
+}
+
+function rushStartPolling(gameId) {
+  if (rushPollInterval) clearInterval(rushPollInterval);
+  rushPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch(API + '/api/hb/rush/' + gameId);
+      if (!res.ok) return;
+      rushRender(await res.json());
+    } catch (e) {}
+  }, 1500);
+}
+
+async function rushExecute() {
+  if (!rushGameId) return;
+  try {
+    const res = await fetch(API + '/api/hb/rush/' + rushGameId + '/execute', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet })
+    });
+    if (res.ok) { rushRender(await res.json()); showToast('Signal executed!', 'success'); }
+  } catch (e) { showToast('Executed (demo)', 'info'); }
+}
+
+async function rushSkip() {
+  if (!rushGameId) return;
+  try {
+    const res = await fetch(API + '/api/hb/rush/' + rushGameId + '/skip', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet })
+    });
+    if (res.ok) rushRender(await res.json());
+  } catch (e) {}
+}
+
+function rushRender(data) {
+  const area = document.getElementById('rush-signal-area');
+  const pnlEl = document.getElementById('rush-pnl');
+  const metaEl = document.getElementById('rush-meta');
+  const timerEl = document.getElementById('rush-timer');
+
+  // PnL + meta
+  const pnl = data.total_pnl || 0;
+  pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+  pnlEl.style.color = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+  metaEl.textContent = 'Round ' + (data.current_round || 0) + '/5 | AI: ' +
+    (data.ai_accuracy || 0) + '/' + (data.rounds_played || 0) + ' correct';
+
+  // Progress dots
+  const dots = document.querySelectorAll('#rush-progress .rush-dot');
+  (data.rounds || []).forEach((r, i) => {
+    if (i < dots.length) {
+      if (r.decision === 'skip') dots[i].className = 'rush-dot skipped';
+      else if (r.won) dots[i].className = 'rush-dot won';
+      else if (r.decision === 'execute') dots[i].className = 'rush-dot lost';
+      else dots[i].className = 'rush-dot active';
+    }
+  });
+
+  // Timer
+  if (data.status === 'live' && data.round_time_left > 0) {
+    timerEl.style.display = 'block';
+    timerEl.textContent = Math.ceil(data.round_time_left);
+    timerEl.className = data.round_time_left < 10 ? 'flip-timer urgent' : 'flip-timer';
+  } else {
+    timerEl.style.display = 'none';
+  }
+
+  // Signal card
+  if (data.status === 'live' && data.current_signal && !data.current_decision) {
+    const sig = data.current_signal;
+    const dir = (sig.direction || 'BUY').toLowerCase();
+    const confClass = sig.confidence >= 75 ? 'high' : sig.confidence >= 55 ? 'mid' : 'low';
+    area.innerHTML = `
+      <div class="rush-signal-card ${dir}">
+        <div class="rush-signal-header">
+          <span class="rush-signal-strategy">${sig.emoji || ''} ${sig.strategy_name || sig.strategy}</span>
+          <span class="rush-signal-confidence ${confClass}">${sig.confidence}%</span>
+        </div>
+        <div class="rush-signal-direction ${dir}">${sig.direction || 'BUY'}</div>
+        <div class="rush-levels">
+          <div class="rush-level"><div class="rush-level-label">Entry</div><div class="rush-level-value">$${(sig.entry||0).toLocaleString()}</div></div>
+          <div class="rush-level"><div class="rush-level-label">Target</div><div class="rush-level-value" style="color:var(--accent)">$${(sig.target||0).toLocaleString()}</div></div>
+          <div class="rush-level"><div class="rush-level-label">Stop</div><div class="rush-level-value" style="color:var(--red)">$${(sig.stop||0).toLocaleString()}</div></div>
+          <div class="rush-level"><div class="rush-level-label">R:R</div><div class="rush-level-value">${sig.rr_ratio || '—'}</div></div>
+        </div>
+        <div class="rush-reason">${sig.reason || ''}</div>
+        <div class="rush-actions">
+          <button class="rush-btn-execute" onclick="rushExecute()">EXECUTE</button>
+          <button class="rush-btn-skip" onclick="rushSkip()">SKIP</button>
+        </div>
+      </div>`;
+  } else if (data.status === 'live' && data.current_decision) {
+    area.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text2)">Waiting for round to settle...</div>';
+  } else if (data.status === 'finished') {
+    clearInterval(rushPollInterval);
+    const won = (data.total_pnl || 0) > 0;
+    area.innerHTML = `
+      <div style="text-align:center;padding:30px">
+        <div style="font-size:2.5rem;margin-bottom:8px">${won ? '🏆' : '💀'}</div>
+        <div style="font-size:1.4rem;font-weight:800;color:${won ? 'var(--accent)' : 'var(--red)'}">${won ? 'ALPHA EARNED' : 'GAME OVER'}</div>
+        <div style="font-size:1.8rem;font-weight:800;font-family:monospace;margin:8px 0;color:${won ? 'var(--accent)' : 'var(--red)'}">
+          ${(data.total_pnl||0) >= 0 ? '+' : ''}$${(data.total_pnl||0).toFixed(2)}
+        </div>
+        <div style="font-size:.8rem;color:var(--text2)">
+          ${data.rounds_won||0}/5 rounds won | AI accuracy: ${data.ai_accuracy||0}/${data.rounds_played||0}
+        </div>
+        <button class="btn-sniper fire" style="margin-top:20px;max-width:200px" onclick="rushGameId=null;rushReset()">PLAY AGAIN</button>
+      </div>`;
+  }
+
+  // Round history
+  const rounds = data.rounds || [];
+  if (rounds.length) {
+    document.getElementById('rush-rounds-title').style.display = 'block';
+    document.getElementById('rush-rounds').innerHTML = rounds.map(r => {
+      const pnlColor = r.pnl_usd > 0 ? 'var(--accent)' : r.pnl_usd < 0 ? 'var(--red)' : 'var(--text2)';
+      const icon = r.decision === 'skip' ? '⏭️' : r.won ? '✅' : r.pnl_usd < 0 ? '❌' : '⏳';
+      return `<div class="rush-round-result">
+        <span class="rush-round-emoji">${icon}</span>
+        <span class="rush-round-info">R${r.round_num} ${r.emoji||''} ${r.strategy||''} ${r.direction||''}</span>
+        <span class="rush-round-pnl" style="color:${pnlColor}">${r.decision==='skip'?'SKIP':
+          (r.pnl_usd>=0?'+':'')+'\$'+r.pnl_usd.toFixed(2)}</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+function rushReset() {
+  document.getElementById('rush-signal-area').innerHTML = `
+    <div style="text-align:center;padding:40px 20px">
+      <div style="font-size:2rem;margin-bottom:10px">🎯</div>
+      <div style="font-size:1rem;font-weight:700;margin-bottom:6px">Alpha Rush</div>
+      <div style="font-size:.8rem;color:var(--text2);margin-bottom:20px">
+        5 rounds × 1 minute. AI gives you a sniper signal each round.<br>Execute or skip. Your PnL is real.
+      </div>
+      <div class="size-row" style="justify-content:center">
+        <input type="number" class="size-input" id="rush-bet-input" placeholder="Stake ($)" value="5" step="1" min="1" style="max-width:120px;text-align:center">
+      </div>
+      <button class="btn-sniper fire" style="margin-top:14px;max-width:300px" onclick="rushStart()">START ALPHA RUSH — $5</button>
+    </div>`;
+  document.getElementById('rush-pnl').textContent = '$0.00';
+  document.getElementById('rush-pnl').style.color = 'var(--text)';
+  document.getElementById('rush-meta').textContent = 'Round 0/5 | AI: 0/0 correct';
+  document.querySelectorAll('#rush-progress .rush-dot').forEach(d => d.className = 'rush-dot');
+  document.getElementById('rush-rounds-title').style.display = 'none';
+  document.getElementById('rush-rounds').innerHTML = '';
+}
+
+function rushRenderDemo() {
+  rushRender({
+    game_id: 'demo', status: 'live', current_round: 1, total_rounds: 5,
+    round_time_left: 52, total_pnl: 0, rounds_won: 0, rounds_played: 0, ai_accuracy: 0,
+    current_signal: {
+      strategy: 'breakout', strategy_name: 'Scalp Breakout', emoji: '💥',
+      direction: 'BUY', confidence: 82, entry: 69450, target: 69520, stop: 69410,
+      rr_ratio: 1.75, reason: 'BTC broke above 1m Donchian high with 1.8x avg volume. EMA5 > EMA20 confirms.'
+    },
+    current_decision: '', rounds: [],
+  });
 }
 
 // --- Battle Royale ---
