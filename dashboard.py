@@ -15,7 +15,9 @@ from db import (
     get_exchange_summary, get_observed_trades,
     hb_register_user, hb_get_user, hb_get_user_stats, hb_log_trade,
     hb_close_trade, hb_get_leaderboard, hb_get_open_trades,
-    hb_get_achievements, hb_award_achievement
+    hb_get_achievements, hb_award_achievement,
+    hb_create_game, hb_start_game, hb_end_game, hb_get_game,
+    hb_get_active_game, hb_get_game_history, hb_get_game_leaderboard,
 )
 from reporter import Reporter
 from config import DASHBOARD_HOST, DASHBOARD_PORT, BREAKOUT_PAPER_MODE, BULK_API_BASE, HL_API_BASE
@@ -32,6 +34,7 @@ class Dashboard:
         self.bulksol = bulksol
         self.bulk_executor = bulk_executor
         self.hl_executor = hl_executor
+        self.active_games: dict = {}  # game_id → MoonOrDoomEngine
         self.app = web.Application()
         self._setup_routes()
 
@@ -75,6 +78,13 @@ class Dashboard:
         self.app.router.add_get("/api/hb/market", self._hb_market)
         self.app.router.add_get("/api/hb/candles", self._hb_candles)
         self.app.router.add_get("/api/hb/pnl-history/{wallet}", self._hb_pnl_history)
+        # ── Moon or Doom Game Routes ──
+        self.app.router.add_post("/api/hb/game/start", self._hb_game_start)
+        self.app.router.add_post("/api/hb/game/{game_id}/cashout", self._hb_game_cashout)
+        self.app.router.add_post("/api/hb/game/{game_id}/add", self._hb_game_add)
+        self.app.router.add_get("/api/hb/game/{game_id}", self._hb_game_state)
+        self.app.router.add_get("/api/hb/game/history/{wallet}", self._hb_game_history)
+        self.app.router.add_get("/api/hb/game/leaderboard", self._hb_game_leaderboard)
         # ── Analytics Routes (MMT-style) ──
         self.app.router.add_get("/api/hb/orderflow/cvd", self._hb_cvd)
         self.app.router.add_get("/api/hb/orderflow/delta", self._hb_volume_delta)
@@ -709,6 +719,220 @@ class Dashboard:
             "spread": spreads,
             "fetched_at": datetime.utcnow().isoformat() + "Z",
         })
+
+    # ── Moon or Doom Game Handlers ────────────────────────
+
+    async def _hb_game_start(self, request):
+        """Start a Moon or Doom game — opens a real 50x leveraged position."""
+        try:
+            from game_engine import MoonOrDoomEngine, GameConfig
+            body = await request.json()
+            wallet = body.get("wallet")
+            symbol = body.get("symbol", "BTC-USD")
+            bet_amount = float(body.get("bet_amount", 10.0))
+            exchange = body.get("exchange", "bulk")
+            auto_cashout = float(body.get("auto_cashout", 0))
+
+            if not wallet or bet_amount <= 0:
+                return web.json_response({"error": "wallet and positive bet required"}, status=400)
+
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+
+            # Check for existing active game
+            active = hb_get_active_game(user["id"])
+            if active:
+                return web.json_response({"error": "Already have an active game", "game_id": active["id"]}, status=409)
+
+            # Create game in DB
+            config = GameConfig(
+                symbol=symbol, bet_amount=bet_amount, leverage=50.0,
+                crash_threshold_pct=0.02, auto_cashout_mult=auto_cashout,
+                exchange=exchange,
+            )
+            game_id = hb_create_game(user["id"], symbol, exchange, bet_amount, 50.0)
+
+            # Get current price
+            fill_price = await self._get_price(symbol, exchange)
+            if not fill_price:
+                return web.json_response({"error": "Could not fetch price"}, status=502)
+
+            # Calculate position size: notional = bet × leverage, size = notional / price
+            notional = bet_amount * 50.0
+            size = round(notional / fill_price, 6)
+
+            # Place market order via real executor
+            order_id = ""
+            executor = self.bulk_executor if exchange == "bulk" else self.hl_executor
+            if executor:
+                ex_symbol = symbol
+                if exchange == "hyperliquid":
+                    from config import HL_SYMBOL_MAP
+                    ex_symbol = HL_SYMBOL_MAP.get(symbol, symbol)
+                order = await executor.place_order(
+                    symbol=ex_symbol, side="BUY", price=fill_price,
+                    size=size, order_type="market",
+                )
+                if order:
+                    order_id = order.get("order_id", "")
+                    fill_price = float(order.get("price", fill_price))
+                    size = float(order.get("size", size))
+
+            # Start game engine
+            engine = MoonOrDoomEngine(config)
+            engine.start_game(fill_price, size, order_id)
+            self.active_games[game_id] = engine
+
+            # Update DB
+            hb_start_game(game_id, fill_price, size, order_id)
+
+            # Award first_blood if first game
+            hb_award_achievement(user["id"], "first_blood")
+
+            return web.json_response({
+                "game_id": game_id,
+                **engine.to_dict(),
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_game_cashout(self, request):
+        """Cash out of an active Moon or Doom game."""
+        try:
+            game_id = int(request.match_info["game_id"])
+            engine = self.active_games.get(game_id)
+            if not engine:
+                return web.json_response({"error": "Game not found or not active"}, status=404)
+
+            # Get current price for final PnL
+            current_price = await self._get_price(
+                engine.state.config.symbol, engine.state.config.exchange
+            )
+            state = engine.cash_out(current_price)
+
+            # Close the real position
+            executor = self.bulk_executor if state.config.exchange == "bulk" else self.hl_executor
+            if executor and state.size > 0:
+                ex_symbol = state.config.symbol
+                if state.config.exchange == "hyperliquid":
+                    from config import HL_SYMBOL_MAP
+                    ex_symbol = HL_SYMBOL_MAP.get(state.config.symbol, state.config.symbol)
+                await executor.place_order(
+                    symbol=ex_symbol, side="SELL", price=current_price,
+                    size=state.size, order_type="market",
+                )
+
+            # Save to DB
+            result = hb_end_game(
+                game_id, state.exit_price, state.exit_multiplier,
+                state.high_water_mark, state.pnl_usd, "cashed_out"
+            )
+
+            # Clean up
+            del self.active_games[game_id]
+
+            return web.json_response(engine.to_dict())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_game_add(self, request):
+        """Add to position in an active Moon or Doom game."""
+        try:
+            game_id = int(request.match_info["game_id"])
+            engine = self.active_games.get(game_id)
+            if not engine:
+                return web.json_response({"error": "Game not found or not active"}, status=404)
+
+            body = await request.json()
+            add_amount = float(body.get("amount", engine.state.config.bet_amount))
+
+            current_price = await self._get_price(
+                engine.state.config.symbol, engine.state.config.exchange
+            )
+            add_notional = add_amount * 50.0
+            add_size = round(add_notional / current_price, 6)
+
+            # Place additional market order
+            executor = self.bulk_executor if engine.state.config.exchange == "bulk" else self.hl_executor
+            if executor:
+                ex_symbol = engine.state.config.symbol
+                if engine.state.config.exchange == "hyperliquid":
+                    from config import HL_SYMBOL_MAP
+                    ex_symbol = HL_SYMBOL_MAP.get(engine.state.config.symbol, engine.state.config.symbol)
+                await executor.place_order(
+                    symbol=ex_symbol, side="BUY", price=current_price,
+                    size=add_size, order_type="market",
+                )
+
+            engine.add_to_position(current_price, add_size)
+            engine.state.config.bet_amount += add_amount
+
+            return web.json_response(engine.to_dict())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_game_state(self, request):
+        """Get current state of an active game (polled by frontend)."""
+        try:
+            game_id = int(request.match_info["game_id"])
+            engine = self.active_games.get(game_id)
+            if not engine:
+                # Check DB for finished game
+                game = hb_get_game(game_id)
+                if game:
+                    return web.json_response(game)
+                return web.json_response({"error": "Game not found"}, status=404)
+
+            # Update with latest price
+            current_price = await self._get_price(
+                engine.state.config.symbol, engine.state.config.exchange
+            )
+            if current_price:
+                engine.process_tick(current_price)
+
+            state = engine.to_dict()
+
+            # If game just crashed, close position and persist
+            if engine.state.status.value == "crashed":
+                executor = self.bulk_executor if engine.state.config.exchange == "bulk" else self.hl_executor
+                if executor and engine.state.size > 0:
+                    ex_symbol = engine.state.config.symbol
+                    if engine.state.config.exchange == "hyperliquid":
+                        from config import HL_SYMBOL_MAP
+                        ex_symbol = HL_SYMBOL_MAP.get(engine.state.config.symbol, engine.state.config.symbol)
+                    await executor.place_order(
+                        symbol=ex_symbol, side="SELL", price=current_price,
+                        size=engine.state.size, order_type="market",
+                    )
+                hb_end_game(
+                    game_id, engine.state.exit_price, engine.state.exit_multiplier,
+                    engine.state.high_water_mark, engine.state.pnl_usd, "crashed"
+                )
+                del self.active_games[game_id]
+
+            state["price_history"] = engine.state.price_history[-100:]
+            return web.json_response(state)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_game_history(self, request):
+        """Get game history for a user."""
+        try:
+            wallet = request.match_info["wallet"]
+            user = hb_get_user(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+            return web.json_response(hb_get_game_history(user["id"]))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_game_leaderboard(self, request):
+        """Moon or Doom leaderboard — highest multiplier cash-outs."""
+        try:
+            return web.json_response(hb_get_game_leaderboard())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     # ── Analytics Handlers (MMT-style) ──────────────────────
 

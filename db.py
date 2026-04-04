@@ -305,6 +305,31 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_hb_users_league ON hb_users(league)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_hb_users_xp ON hb_users(xp DESC)")
 
+    # ── Moon or Doom Game Tables ─────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS hb_games (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            symbol      TEXT NOT NULL,
+            exchange    TEXT NOT NULL DEFAULT 'bulk',
+            bet_amount  REAL NOT NULL,
+            leverage    REAL NOT NULL DEFAULT 50,
+            entry_price REAL,
+            exit_price  REAL,
+            size        REAL,
+            multiplier  REAL DEFAULT 1.0,
+            high_water  REAL DEFAULT 1.0,
+            pnl_usd     REAL DEFAULT 0,
+            status      TEXT DEFAULT 'waiting',
+            order_id    TEXT,
+            started_at  TEXT,
+            ended_at    TEXT,
+            created_at  TEXT NOT NULL
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hb_games_user ON hb_games(user_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hb_games_status ON hb_games(status)")
+
     # ── Indexes ──────────────────────────────────────────────
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_ts ON observed_trades(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_maker ON observed_trades(maker)")
@@ -1163,6 +1188,94 @@ def hb_get_open_trades(user_id: int = None) -> list:
         rows = conn.execute(
             "SELECT * FROM hb_trades WHERE status='OPEN' ORDER BY opened_at DESC"
         ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ── Moon or Doom Game Helpers ─────────────────────────────────
+
+def hb_create_game(user_id: int, symbol: str, exchange: str,
+                   bet_amount: float, leverage: float = 50.0) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        """INSERT INTO hb_games (user_id, symbol, exchange, bet_amount, leverage, status, created_at)
+           VALUES (?,?,?,?,?,?,?)""",
+        (user_id, symbol, exchange, bet_amount, leverage, "waiting",
+         datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    game_id = cur.lastrowid
+    conn.close()
+    return game_id
+
+
+def hb_start_game(game_id: int, entry_price: float, size: float,
+                  order_id: str = "") -> bool:
+    conn = get_conn()
+    conn.execute(
+        """UPDATE hb_games SET entry_price=?, size=?, order_id=?, status='live',
+           started_at=? WHERE id=?""",
+        (entry_price, size, order_id, datetime.utcnow().isoformat(), game_id)
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def hb_end_game(game_id: int, exit_price: float, multiplier: float,
+                high_water: float, pnl_usd: float, status: str) -> dict:
+    conn = get_conn()
+    conn.execute(
+        """UPDATE hb_games SET exit_price=?, multiplier=?, high_water=?,
+           pnl_usd=?, status=?, ended_at=? WHERE id=?""",
+        (exit_price, multiplier, high_water, pnl_usd, status,
+         datetime.utcnow().isoformat(), game_id)
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM hb_games WHERE id=?", (game_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
+def hb_get_game(game_id: int) -> Optional[dict]:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM hb_games WHERE id=?", (game_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def hb_get_active_game(user_id: int) -> Optional[dict]:
+    """Get user's currently active (live) game, if any."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM hb_games WHERE user_id=? AND status='live' ORDER BY id DESC LIMIT 1",
+        (user_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def hb_get_game_history(user_id: int, limit: int = 50) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT * FROM hb_games WHERE user_id=? AND status IN ('cashed_out','crashed')
+           ORDER BY ended_at DESC LIMIT ?""",
+        (user_id, limit)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def hb_get_game_leaderboard(limit: int = 50) -> list:
+    """Leaderboard by highest single-game multiplier (cashed out only)."""
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT g.*, u.username, u.wallet
+           FROM hb_games g JOIN hb_users u ON g.user_id = u.id
+           WHERE g.status='cashed_out'
+           ORDER BY g.multiplier DESC LIMIT ?""",
+        (limit,)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
