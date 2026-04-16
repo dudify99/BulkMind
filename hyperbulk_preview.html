@@ -60,6 +60,9 @@ a{color:var(--accent);text-decoration:none}
 .size-quick button{background:var(--surface);border:1px solid var(--border);color:var(--text2);padding:8px 12px;border-radius:6px;cursor:pointer;font-size:.75rem;font-weight:600}
 .size-quick button:hover{border-color:var(--accent);color:var(--accent)}
 
+.faucet-btn{width:100%;padding:12px;background:var(--surface);border:1px dashed var(--purple);color:var(--purple);border-radius:var(--radius);font-size:.85rem;font-weight:700;cursor:pointer;margin:10px 0;transition:all .2s}
+.faucet-btn:hover{background:rgba(124,77,255,.1);border-style:solid}
+.faucet-btn:disabled{opacity:.4;cursor:not-allowed}
 .section-title{font-size:.85rem;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin:20px 0 10px}
 
 /* Position Card */
@@ -430,6 +433,9 @@ a{color:var(--accent);text-decoration:none}
     <button class="btn-buy" onclick="placeTrade('buy')">BUY</button>
     <button class="btn-sell" onclick="placeTrade('sell')">SELL</button>
   </div>
+  <button class="faucet-btn" id="faucet-btn" onclick="requestFaucet()">
+    Get Testnet USDC
+  </button>
   <div class="section-title">Open Positions</div>
   <div id="open-positions"><div class="empty">No open positions</div></div>
   <div class="section-title">Live Trade Feed</div>
@@ -935,6 +941,15 @@ async function privyPhantom() {
     } catch(e) { showToast('Phantom rejected', 'error'); return; }
   }
   _finishConnect('PHM' + Math.random().toString(36).slice(2,14).toUpperCase(), null);
+}
+
+async function requestFaucet() {
+  if (!wallet) { showToast('Connect wallet first', 'error'); return; }
+  const btn = document.getElementById('faucet-btn');
+  btn.disabled = true; btn.textContent = 'Requesting…';
+  await new Promise(r => setTimeout(r, 800));
+  showToast('10,000 Testnet USDC credited!', 'success');
+  btn.disabled = false; btn.textContent = 'Get Testnet USDC';
 }
 
 function _finishConnect(addr, email) {

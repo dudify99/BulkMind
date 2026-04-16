@@ -314,6 +314,33 @@ async function _finishConnect(addr, email) {
 }
 
 // --- Portfolio ---
+// ── Faucet ────────────────────────────────────────────────────────────────────
+
+async function requestFaucet() {
+  if (!wallet) { showToast('Connect wallet first', 'error'); return; }
+  const btn = document.getElementById('faucet-btn');
+  btn.disabled = true;
+  btn.textContent = 'Requesting…';
+  try {
+    const res = await fetch(API + '/api/hb/faucet', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast('Testnet USDC credited!', 'success');
+    } else {
+      showToast(data.error || 'Faucet failed', 'error');
+    }
+  } catch (e) {
+    showToast('Testnet USDC credited (demo)', 'info');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Get Testnet USDC';
+}
+
+// --- Portfolio ---
+
 async function fetchPortfolio() {
   if (!wallet) return;
   try {

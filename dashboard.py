@@ -124,6 +124,7 @@ class Dashboard:
         self.app.router.add_get("/api/hb/trades/open", self._hb_open_trades)
         self.app.router.add_get("/api/hb/achievements/{wallet}", self._hb_achievements)
         self.app.router.add_get("/api/hb/market", self._hb_market)
+        self.app.router.add_post("/api/hb/faucet", self._hb_faucet)
         self.app.router.add_get("/api/hb/candles", self._hb_candles)
         self.app.router.add_get("/api/hb/pnl-history/{wallet}", self._hb_pnl_history)
         # ── Signal Engine + Alpha Rush Routes ──
@@ -742,6 +743,36 @@ class Dashboard:
                 return web.json_response({"error": "User not found"}, status=404)
             data = hb_get_achievements(user["id"])
             return web.json_response(data)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _hb_faucet(self, request):
+        """Request testnet USDC from the Bulk faucet for a connected wallet."""
+        try:
+            data = await request.json()
+            wallet_addr = validate_wallet(data.get("wallet", ""))
+            if not wallet_addr:
+                return web.json_response({"error": "Wallet address required"}, status=400)
+
+            if self.bulk_executor:
+                result = await self.bulk_executor.faucet()
+                if result:
+                    return web.json_response({
+                        "status": "ok",
+                        "message": "Testnet USDC requested for your Bulk account",
+                        "wallet": wallet_addr,
+                        "result": result,
+                    })
+                return web.json_response({"error": "Faucet request failed"}, status=500)
+
+            # No executor — return demo response
+            return web.json_response({
+                "status": "ok",
+                "message": "Testnet USDC credited (demo mode)",
+                "wallet": wallet_addr,
+                "amount": 10000,
+                "paper": True,
+            })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
