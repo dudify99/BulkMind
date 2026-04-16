@@ -28,7 +28,7 @@ DISCORD_WEBHOOK_URL  = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 # ── Dashboard ────────────────────────────────────────────────
 DASHBOARD_HOST       = os.getenv("DASHBOARD_HOST", "0.0.0.0")
-DASHBOARD_PORT       = int(os.getenv("DASHBOARD_PORT", "8080"))
+DASHBOARD_PORT       = int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", "8080")))
 
 # ── BulkWatch Settings ─────────────────────────────────────────
 WATCH_PING_INTERVAL_SEC     = 30       # heartbeat check
