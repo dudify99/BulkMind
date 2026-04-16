@@ -3,8 +3,11 @@
 *.pem
 *.key
 
-# Database
+# Database (runtime files — never commit)
 data/bulkmind.db
+data/bulkmind.db-shm
+data/bulkmind.db-wal
+data/*.json
 
 # Python
 __pycache__/
