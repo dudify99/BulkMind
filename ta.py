@@ -1,10 +1,10 @@
 """
 Technical Analysis Library
-ATR, EMA, Volume analysis, Breakout detection
+ATR, EMA, Volume analysis, Breakout detection, Price Action (SMC)
 """
 
 import statistics
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 
 def ema(values: List[float], period: int) -> List[float]:
@@ -369,4 +369,272 @@ def bollinger_bands(candles: List[Dict], period: int = 20,
         upper.append(round(mid[i] + num_std * std, 2))
         lower.append(round(mid[i] - num_std * std, 2))
     return {"middle": mid, "upper": upper, "lower": lower}
+
+
+# ══════════════════════════════════════════════════════════════
+#  Price Action / Smart Money Concepts (SMC) for Sniper Strategies
+# ══════════════════════════════════════════════════════════════
+
+def detect_swing_points(candles: List[Dict], lookback: int = 5) -> Dict:
+    """Detect swing highs and swing lows using N-bar lookback.
+    A swing high = high is higher than N bars on each side.
+    Returns: {swing_highs: [(index, price)], swing_lows: [(index, price)]}
+    """
+    highs = []
+    lows = []
+    if len(candles) < lookback * 2 + 1:
+        return {"swing_highs": highs, "swing_lows": lows}
+
+    for i in range(lookback, len(candles) - lookback):
+        h = candles[i]["high"]
+        l = candles[i]["low"]
+        is_sh = all(h >= candles[i - j]["high"] and h >= candles[i + j]["high"]
+                     for j in range(1, lookback + 1))
+        is_sl = all(l <= candles[i - j]["low"] and l <= candles[i + j]["low"]
+                     for j in range(1, lookback + 1))
+        if is_sh:
+            highs.append((i, h))
+        if is_sl:
+            lows.append((i, l))
+
+    return {"swing_highs": highs, "swing_lows": lows}
+
+
+def detect_order_blocks(candles: List[Dict], lookback: int = 20) -> List[Dict]:
+    """Detect bullish and bearish order blocks (institutional entry zones).
+
+    Bullish OB: last bearish candle before a strong bullish impulse move.
+    Bearish OB: last bullish candle before a strong bearish impulse move.
+    Returns list of: {type, direction, ob_high, ob_low, index, strength}
+    """
+    if len(candles) < lookback:
+        return []
+
+    blocks = []
+    window = candles[-lookback:]
+    avg_body = sum(abs(c["close"] - c["open"]) for c in window) / len(window)
+    if avg_body <= 0:
+        return []
+
+    impulse_threshold = avg_body * 2.5  # Impulse = 2.5x average body
+
+    for i in range(1, len(window) - 1):
+        prev = window[i - 1]
+        curr = window[i]
+        nxt = window[i + 1]
+
+        prev_body = prev["close"] - prev["open"]
+        nxt_body = nxt["close"] - nxt["open"]
+
+        # Bullish OB: prev candle is bearish, next candle is strong bullish impulse
+        if prev_body < 0 and nxt_body > impulse_threshold:
+            blocks.append({
+                "type": "bullish_ob",
+                "direction": "BUY",
+                "ob_high": prev["high"],
+                "ob_low": prev["low"],
+                "index": len(candles) - lookback + i - 1,
+                "strength": round(nxt_body / avg_body, 1),
+            })
+
+        # Bearish OB: prev candle is bullish, next candle is strong bearish impulse
+        if prev_body > 0 and nxt_body < -impulse_threshold:
+            blocks.append({
+                "type": "bearish_ob",
+                "direction": "SELL",
+                "ob_high": prev["high"],
+                "ob_low": prev["low"],
+                "index": len(candles) - lookback + i - 1,
+                "strength": round(abs(nxt_body) / avg_body, 1),
+            })
+
+    return blocks
+
+
+def detect_fvg(candles: List[Dict]) -> List[Dict]:
+    """Detect Fair Value Gaps (imbalances between 3 consecutive candles).
+
+    Bullish FVG: candle 3's low > candle 1's high (gap up, unfilled).
+    Bearish FVG: candle 1's low > candle 3's high (gap down, unfilled).
+    Returns list of: {type, direction, gap_high, gap_low, gap_size, index}
+    """
+    if len(candles) < 3:
+        return []
+
+    gaps = []
+    for i in range(2, len(candles)):
+        c1 = candles[i - 2]
+        c3 = candles[i]
+
+        # Bullish FVG: gap between candle 1 high and candle 3 low
+        if c3["low"] > c1["high"]:
+            gap_size = c3["low"] - c1["high"]
+            gaps.append({
+                "type": "bullish_fvg",
+                "direction": "BUY",
+                "gap_high": c3["low"],
+                "gap_low": c1["high"],
+                "gap_size": gap_size,
+                "index": i,
+            })
+
+        # Bearish FVG: gap between candle 1 low and candle 3 high
+        if c1["low"] > c3["high"]:
+            gap_size = c1["low"] - c3["high"]
+            gaps.append({
+                "type": "bearish_fvg",
+                "direction": "SELL",
+                "gap_high": c1["low"],
+                "gap_low": c3["high"],
+                "gap_size": gap_size,
+                "index": i,
+            })
+
+    return gaps
+
+
+def detect_bos(candles: List[Dict], lookback: int = 20) -> Optional[Dict]:
+    """Detect Break of Structure — price breaking a recent swing point.
+
+    Bullish BOS: price breaks above a recent swing high (trend continuation up).
+    Bearish BOS: price breaks below a recent swing low (trend continuation down).
+    Returns: {type, direction, broken_level, close, strength} or None
+    """
+    swings = detect_swing_points(candles[:-1], lookback=3)
+    if not swings["swing_highs"] and not swings["swing_lows"]:
+        return None
+
+    current = candles[-1]
+    close = current["close"]
+
+    # Check bullish BOS (break above most recent swing high)
+    if swings["swing_highs"]:
+        last_sh = swings["swing_highs"][-1]
+        sh_price = last_sh[1]
+        if close > sh_price:
+            return {
+                "type": "bullish_bos",
+                "direction": "BUY",
+                "broken_level": sh_price,
+                "close": close,
+                "strength": round((close - sh_price) / sh_price * 100, 4),
+            }
+
+    # Check bearish BOS (break below most recent swing low)
+    if swings["swing_lows"]:
+        last_sl = swings["swing_lows"][-1]
+        sl_price = last_sl[1]
+        if close < sl_price:
+            return {
+                "type": "bearish_bos",
+                "direction": "SELL",
+                "broken_level": sl_price,
+                "close": close,
+                "strength": round((sl_price - close) / sl_price * 100, 4),
+            }
+
+    return None
+
+
+def detect_liquidity_sweep(candles: List[Dict], lookback: int = 20) -> Optional[Dict]:
+    """Detect liquidity sweeps (stop hunts) — price wicks beyond a swing
+    point then closes back inside, trapping breakout traders.
+
+    Bullish sweep: wick below swing low, close back above (buy signal).
+    Bearish sweep: wick above swing high, close back below (sell signal).
+    Returns: {type, direction, swept_level, wick, close, reclaim_pct} or None
+    """
+    window = candles[-lookback:] if len(candles) >= lookback else candles
+    if len(window) < 8:
+        return None
+
+    swings = detect_swing_points(window[:-2], lookback=3)
+    current = candles[-1]
+    prev = candles[-2]
+
+    # Bullish sweep: wick below a swing low, close back above it
+    if swings["swing_lows"]:
+        for _, sl_price in reversed(swings["swing_lows"]):
+            if (current["low"] < sl_price and
+                    current["close"] > sl_price and
+                    prev["close"] > sl_price):
+                return {
+                    "type": "bullish_sweep",
+                    "direction": "BUY",
+                    "swept_level": sl_price,
+                    "wick": current["low"],
+                    "close": current["close"],
+                    "reclaim_pct": round((current["close"] - sl_price) / sl_price * 100, 4),
+                }
+
+    # Bearish sweep: wick above a swing high, close back below it
+    if swings["swing_highs"]:
+        for _, sh_price in reversed(swings["swing_highs"]):
+            if (current["high"] > sh_price and
+                    current["close"] < sh_price and
+                    prev["close"] < sh_price):
+                return {
+                    "type": "bearish_sweep",
+                    "direction": "SELL",
+                    "swept_level": sh_price,
+                    "wick": current["high"],
+                    "close": current["close"],
+                    "reclaim_pct": round((sh_price - current["close"]) / sh_price * 100, 4),
+                }
+
+    return None
+
+
+def detect_choch(candles: List[Dict], lookback: int = 20) -> Optional[Dict]:
+    """Detect Change of Character — first break of structure against the trend.
+
+    In an uptrend, CHoCH = price breaks below a swing low (reversal signal → SELL).
+    In a downtrend, CHoCH = price breaks above a swing high (reversal signal → BUY).
+    Returns: {type, direction, broken_level, close, trend_was} or None
+    """
+    window = candles[-lookback:] if len(candles) >= lookback else candles
+    if len(window) < 12:
+        return None
+
+    swings = detect_swing_points(window[:-1], lookback=3)
+    shs = swings["swing_highs"]
+    sls = swings["swing_lows"]
+    close = candles[-1]["close"]
+
+    if len(shs) < 2 or len(sls) < 2:
+        return None
+
+    # Determine trend from swing sequence
+    # Uptrend: higher highs and higher lows
+    hh = shs[-1][1] > shs[-2][1]
+    hl = sls[-1][1] > sls[-2][1]
+    # Downtrend: lower highs and lower lows
+    lh = shs[-1][1] < shs[-2][1]
+    ll = sls[-1][1] < sls[-2][1]
+
+    if hh and hl:
+        # Uptrend — CHoCH if price breaks below last swing low
+        last_sl = sls[-1][1]
+        if close < last_sl:
+            return {
+                "type": "bearish_choch",
+                "direction": "SELL",
+                "broken_level": last_sl,
+                "close": close,
+                "trend_was": "UP",
+            }
+
+    if lh and ll:
+        # Downtrend — CHoCH if price breaks above last swing high
+        last_sh = shs[-1][1]
+        if close > last_sh:
+            return {
+                "type": "bullish_choch",
+                "direction": "BUY",
+                "broken_level": last_sh,
+                "close": close,
+                "trend_was": "DOWN",
+            }
+
+    return None
 

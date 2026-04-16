@@ -15,6 +15,10 @@ from bulk_profile import BulkProfile
 from bulk_sol import BulkSOL
 from breakout_bot import BreakoutBot
 from news_trader import NewsTrader, ExchangeVenue
+from funding_arb import FundingArb
+from hl_copier import HLCopier
+from macro_trader import MacroTrader
+from war_trader import WarTrader
 from hyperliquid import HyperliquidClient, HyperliquidExecutor
 from hl_stream import HLStream
 from dashboard import Dashboard
@@ -22,14 +26,20 @@ from evoskill_integration import run_evoskill_loop
 from config import (
     BREAKOUT_PAPER_MODE, NEWS_PAPER_MODE, NEWS_EXCHANGES,
     HL_PAPER_MODE, DASHBOARD_PORT,
+    FUNDING_PAPER_MODE, COPIER_PAPER_MODE,
+    MACRO_PAPER_MODE, WAR_PAPER_MODE,
 )
 
 
 async def main():
     print("=" * 50)
     print("  🧠 BulkMind Starting")
-    print(f"  BreakoutBot: {'PAPER' if BREAKOUT_PAPER_MODE else '🔴 LIVE'}")
-    print(f"  NewsTrader:  {'PAPER' if NEWS_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  BreakoutBot:  {'PAPER' if BREAKOUT_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  NewsTrader:   {'PAPER' if NEWS_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  FundingArb:   {'PAPER' if FUNDING_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  HLCopier:     {'PAPER' if COPIER_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  MacroTrader:  {'PAPER' if MACRO_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  WarTrader:    {'PAPER' if WAR_PAPER_MODE else '🔴 LIVE'}")
     print(f"  Dashboard: http://localhost:{DASHBOARD_PORT}")
     print("=" * 50)
 
@@ -76,6 +86,42 @@ async def main():
             )
         news_trader = NewsTrader(news_venues, reporter, session)
 
+        # ── FundingArb (delta-neutral funding rate arb) ──────
+        funding_arb = FundingArb(
+            bulk_executor=BulkExecutor(client, paper=FUNDING_PAPER_MODE),
+            hl_executor=HyperliquidExecutor(hl_client, paper=HL_PAPER_MODE),
+            bulk_client=client,
+            hl_client=hl_client,
+            reporter=reporter,
+            session=session,
+        )
+
+        # ── HLCopier (whale wallet mirroring) ────────────────
+        hl_copier = HLCopier(
+            executor=BulkExecutor(client, paper=COPIER_PAPER_MODE),
+            hl_client=hl_client,
+            reporter=reporter,
+            session=session,
+        )
+
+        # ── MacroTrader (economic calendar) ───────────────────
+        macro_venues = []
+        if "bulk" in NEWS_EXCHANGES:
+            macro_venues.append(
+                ExchangeVenue("bulk", client,
+                              BulkExecutor(client, paper=MACRO_PAPER_MODE),
+                              paper=MACRO_PAPER_MODE)
+            )
+        if "hyperliquid" in NEWS_EXCHANGES:
+            macro_venues.append(
+                ExchangeVenue("hyperliquid", hl_client, hl_exec,
+                              paper=HL_PAPER_MODE)
+            )
+        macro_trader = MacroTrader(macro_venues, reporter, session)
+
+        # ── WarTrader (geopolitical event classifier) ─────────
+        war_trader = WarTrader(macro_venues, reporter, session)
+
         venue_str = ", ".join(v.name for v in news_venues)
         await reporter.send(
             "🟢 *BulkMind Online*\n"
@@ -85,23 +131,31 @@ async def main():
             f"BulkSOL: ✅\n"
             f"BreakoutBot: ✅\n"
             f"NewsTrader: ✅ ({venue_str})\n"
+            f"FundingArb: ✅\n"
+            f"HLCopier: ✅\n"
+            f"MacroTrader: ✅\n"
+            f"WarTrader: ✅\n"
             f"Dashboard: ✅\n"
             f"Mode: `{'PAPER' if BREAKOUT_PAPER_MODE else 'LIVE'}`"
         )
 
         # Run all loops concurrently
         await asyncio.gather(
-            dashboard.run(),        # Web dashboard + API
-            watch.run(),            # BulkWatch: exchange health
-            stream.run(),           # BulkStream: Bulk live trade feed
-            hl_stream.run(),        # HLStream: Hyperliquid live trade feed
-            profile.run(),          # BulkProfile: wallet discovery
-            bulksol.run(),          # BulkSOL: staking analytics
-            bot.run(),              # BreakoutBot: TA trading agent
-            news_trader.run(),      # NewsTrader: LLM news agent
-            hb_pnl_loop(reporter, dashboard),  # HyperBulk: live PnL broadcasts
-            hb_analytics_loop(client, hl_client),  # HyperBulk: orderbook + OI + funding polling
-            evoskill_schedule(),    # Periodic EvoSkill improvement
+            dashboard.run(),            # Web dashboard + API
+            watch.run(),                # BulkWatch: exchange health
+            stream.run(),               # BulkStream: Bulk live trade feed
+            hl_stream.run(),            # HLStream: Hyperliquid live trade feed
+            profile.run(),              # BulkProfile: wallet discovery
+            bulksol.run(),              # BulkSOL: staking analytics
+            bot.run(),                  # BreakoutBot: TA trading agent
+            news_trader.run(),          # NewsTrader: LLM news agent
+            funding_arb.run(),          # FundingArb: funding rate arb
+            hl_copier.run(),            # HLCopier: whale copy trading
+            macro_trader.run(),         # MacroTrader: economic calendar
+            war_trader.run(),           # WarTrader: geopolitical events
+            hb_pnl_loop(reporter, dashboard),
+            hb_analytics_loop(client, hl_client),
+            evoskill_schedule(),
         )
 
 

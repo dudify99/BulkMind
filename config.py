@@ -124,4 +124,47 @@ HL_ASSET_IDS = {
     "SOL": 5,
 }
 
+# ── FundingArb Settings ───────────────────────────────────────
+FUNDING_SYMBOLS         = ["BTC-USD", "ETH-USD", "SOL-USD"]
+FUNDING_CHECK_SEC       = 300          # check funding every 5 min
+FUNDING_MIN_DIFF_BPS    = 5            # min diff in bps to open arb (0.05%)
+FUNDING_POSITION_USD    = 100          # position size per leg
+FUNDING_MAX_POSITIONS   = 3            # max simultaneous arb positions
+FUNDING_CLOSE_DIFF_BPS  = 1            # close when diff narrows to 1 bps
+FUNDING_PAPER_MODE      = True
+
+# ── HLCopier Settings ────────────────────────────────────────
+COPIER_WALLETS = [                     # whale wallets to monitor on HL
+    # Add HL wallet addresses here (public addresses only)
+]
+COPIER_SYMBOLS          = ["BTC-USD", "ETH-USD", "SOL-USD"]
+COPIER_CHECK_SEC        = 15           # poll wallet positions every 15s
+COPIER_POSITION_USD     = 50           # copy size (scaled down from whale)
+COPIER_MAX_POSITIONS    = 5            # max simultaneous copies
+COPIER_MIN_SIZE_USD     = 10000        # only copy whale trades > $10k
+COPIER_PAPER_MODE       = True
+
+# ── MacroTrader Settings ─────────────────────────────────────
+MACRO_SYMBOLS           = ["BTC-USD", "ETH-USD"]
+MACRO_CHECK_SEC         = 300          # check calendar every 5 min
+MACRO_POSITION_USD      = 100          # position size for macro trades
+MACRO_PRE_EVENT_MIN     = 15           # enter position 15 min before event
+MACRO_POST_EVENT_MIN    = 60           # exit within 60 min after event
+MACRO_PAPER_MODE        = True
+MACRO_LLM_MODEL         = "claude-haiku-4-5-20251001"
+
+# ── WarTrader Settings ───────────────────────────────────────
+WAR_SYMBOLS             = ["BTC-USD", "ETH-USD", "SOL-USD"]
+WAR_CHECK_SEC           = 120          # check geopolitical news every 2 min
+WAR_POSITION_USD        = 100          # position size for war trades
+WAR_MIN_SEVERITY        = 7            # only trade severity >= 7/10
+WAR_MAX_HOLD_MIN        = 60           # force-close after 60 min
+WAR_PAPER_MODE          = True
+WAR_LLM_MODEL           = "claude-haiku-4-5-20251001"
+WAR_KEYWORDS            = [
+    "war", "invasion", "sanctions", "military", "nuclear", "missile",
+    "conflict", "ceasefire", "embargo", "blockade", "coup",
+    "tariff", "trade war", "retaliation",
+]
+
 HL_PAPER_MODE = True                   # paper trading default

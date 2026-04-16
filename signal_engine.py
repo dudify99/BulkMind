@@ -12,6 +12,8 @@ from ta import (
     fibonacci_levels, death_cross, ema_crossover,
     detect_breakout, detect_pattern, donchian_channel,
     bollinger_bands, compute_sl_tp, position_size,
+    detect_order_blocks, detect_fvg, detect_bos,
+    detect_liquidity_sweep, detect_choch,
 )
 
 
@@ -26,6 +28,12 @@ STRATEGIES = {
     "death_cross":    {"name": "Death/Golden Cross",   "emoji": "💀", "desc": "50 EMA crosses 200 EMA"},
     "pattern":        {"name": "Candlestick Pattern",  "emoji": "🕯️", "desc": "Engulfing, hammer, 3 soldiers/crows"},
     "mean_reversion": {"name": "Mean Reversion",       "emoji": "🔄", "desc": "RSI extreme + price beyond Bollinger"},
+    # Price Action / SMC Sniper Strategies (high-leverage precision entries)
+    "order_block":    {"name": "Order Block",          "emoji": "🏦", "desc": "Institutional entry zone — tight SL, 3:1+ R:R"},
+    "fvg":            {"name": "Fair Value Gap",       "emoji": "⚡", "desc": "Imbalance fill — price returns to unfilled gap"},
+    "liq_sweep":      {"name": "Liquidity Sweep",      "emoji": "🎯", "desc": "Stop hunt reversal — swept level + reclaim"},
+    "bos":            {"name": "Break of Structure",   "emoji": "🔨", "desc": "Trend continuation — swing point broken"},
+    "choch":          {"name": "Change of Character",  "emoji": "🔀", "desc": "Trend reversal — first counter-trend break"},
 }
 
 
@@ -123,6 +131,32 @@ class SignalEngine:
         if sig:
             signals.append(sig)
 
+        # ── Price Action / SMC Sniper Strategies ─────────────
+        # 7. Order Block
+        sig = self._check_order_block(symbol, candles, close, atr_val)
+        if sig:
+            signals.append(sig)
+
+        # 8. Fair Value Gap
+        sig = self._check_fvg(symbol, candles, close, atr_val)
+        if sig:
+            signals.append(sig)
+
+        # 9. Liquidity Sweep
+        sig = self._check_liq_sweep(symbol, candles, close, atr_val)
+        if sig:
+            signals.append(sig)
+
+        # 10. Break of Structure
+        sig = self._check_bos(symbol, candles, close, atr_val)
+        if sig:
+            signals.append(sig)
+
+        # 11. Change of Character
+        sig = self._check_choch(symbol, candles, close, atr_val)
+        if sig:
+            signals.append(sig)
+
         # Sort by confidence (highest first)
         signals.sort(key=lambda s: s.confidence, reverse=True)
         self._signals[symbol] = signals
@@ -172,6 +206,11 @@ class SignalEngine:
                 ("death_cross", self._check_death_cross),
                 ("pattern", self._check_pattern),
                 ("mean_reversion", self._check_mean_reversion),
+                ("order_block", self._check_order_block),
+                ("fvg", self._check_fvg),
+                ("liq_sweep", self._check_liq_sweep),
+                ("bos", self._check_bos),
+                ("choch", self._check_choch),
             ]
 
             for key, fn in checks:
@@ -373,6 +412,178 @@ class SignalEngine:
                 timestamp=time.time(),
             )
         return None
+
+    # ── Price Action / SMC Sniper Strategies ────────────────
+
+    def _check_order_block(self, symbol: str, candles: list,
+                           close: float, atr_val: float) -> Optional[Signal]:
+        """Order Block: price returns to an institutional entry zone. Tight SL at OB edge."""
+        blocks = detect_order_blocks(candles, lookback=20)
+        if not blocks:
+            return None
+
+        for ob in reversed(blocks):  # Check most recent first
+            direction = ob["direction"]
+            ob_high = ob["ob_high"]
+            ob_low = ob["ob_low"]
+            ob_mid = (ob_high + ob_low) / 2
+            tolerance = atr_val * 0.5
+
+            # Price must be inside or touching the OB zone
+            if direction == "BUY" and ob_low - tolerance <= close <= ob_high + tolerance:
+                sl = ob_low - atr_val * 0.3  # Tight SL just below OB
+                tp = close + (close - sl) * 3.0  # 3:1 R:R
+                confidence = min(92, 65 + ob["strength"] * 5)
+                return Signal(
+                    strategy="order_block", direction="BUY",
+                    confidence=round(confidence),
+                    entry=close, target=round(tp, 2), stop=round(sl, 2),
+                    rr_ratio=3.0,
+                    reason=f"Bullish OB zone ${ob_low:.0f}-${ob_high:.0f} "
+                           f"(impulse strength {ob['strength']}x)",
+                    details=ob, timestamp=time.time(),
+                )
+            if direction == "SELL" and ob_low - tolerance <= close <= ob_high + tolerance:
+                sl = ob_high + atr_val * 0.3
+                tp = close - (sl - close) * 3.0
+                confidence = min(92, 65 + ob["strength"] * 5)
+                return Signal(
+                    strategy="order_block", direction="SELL",
+                    confidence=round(confidence),
+                    entry=close, target=round(tp, 2), stop=round(sl, 2),
+                    rr_ratio=3.0,
+                    reason=f"Bearish OB zone ${ob_low:.0f}-${ob_high:.0f} "
+                           f"(impulse strength {ob['strength']}x)",
+                    details=ob, timestamp=time.time(),
+                )
+        return None
+
+    def _check_fvg(self, symbol: str, candles: list,
+                   close: float, atr_val: float) -> Optional[Signal]:
+        """Fair Value Gap: price fills an imbalance. Entry at gap edge, SL beyond gap."""
+        gaps = detect_fvg(candles[:-3])  # Exclude last 3 candles (gap must be older)
+        if not gaps:
+            return None
+
+        # Only consider gaps that haven't been filled yet and price is near
+        for gap in reversed(gaps):
+            gap_high = gap["gap_high"]
+            gap_low = gap["gap_low"]
+            gap_mid = (gap_high + gap_low) / 2
+            tolerance = atr_val * 0.3
+
+            if gap["direction"] == "BUY":
+                # Price approaching bullish FVG from above (dipping into gap)
+                if gap_low - tolerance <= close <= gap_high + tolerance:
+                    sl = gap_low - atr_val * 0.5
+                    risk = close - sl
+                    tp = close + risk * 3.5  # 3.5:1 R:R
+                    return Signal(
+                        strategy="fvg", direction="BUY",
+                        confidence=78,
+                        entry=close, target=round(tp, 2), stop=round(sl, 2),
+                        rr_ratio=3.5,
+                        reason=f"Bullish FVG fill zone ${gap_low:.0f}-${gap_high:.0f} "
+                               f"(gap size ${gap['gap_size']:.0f})",
+                        details=gap, timestamp=time.time(),
+                    )
+
+            if gap["direction"] == "SELL":
+                if gap_low - tolerance <= close <= gap_high + tolerance:
+                    sl = gap_high + atr_val * 0.5
+                    risk = sl - close
+                    tp = close - risk * 3.5
+                    return Signal(
+                        strategy="fvg", direction="SELL",
+                        confidence=78,
+                        entry=close, target=round(tp, 2), stop=round(sl, 2),
+                        rr_ratio=3.5,
+                        reason=f"Bearish FVG fill zone ${gap_low:.0f}-${gap_high:.0f} "
+                               f"(gap size ${gap['gap_size']:.0f})",
+                        details=gap, timestamp=time.time(),
+                    )
+        return None
+
+    def _check_liq_sweep(self, symbol: str, candles: list,
+                         close: float, atr_val: float) -> Optional[Signal]:
+        """Liquidity Sweep: stop hunt detected — high-conviction reversal entry."""
+        sweep = detect_liquidity_sweep(candles, lookback=20)
+        if not sweep:
+            return None
+
+        direction = sweep["direction"]
+        reclaim = abs(sweep.get("reclaim_pct", 0))
+        confidence = min(95, 70 + reclaim * 30)
+
+        if direction == "BUY":
+            sl = sweep["wick"] - atr_val * 0.2  # SL just below the wick
+            risk = close - sl
+            tp = close + risk * 4.0  # 4:1 R:R — high conviction
+            return Signal(
+                strategy="liq_sweep", direction="BUY",
+                confidence=round(confidence),
+                entry=close, target=round(tp, 2), stop=round(sl, 2),
+                rr_ratio=4.0,
+                reason=f"Bullish liquidity sweep — swept ${sweep['swept_level']:.0f}, "
+                       f"reclaimed {reclaim:.2f}%",
+                details=sweep, timestamp=time.time(),
+            )
+        else:
+            sl = sweep["wick"] + atr_val * 0.2
+            risk = sl - close
+            tp = close - risk * 4.0
+            return Signal(
+                strategy="liq_sweep", direction="SELL",
+                confidence=round(confidence),
+                entry=close, target=round(tp, 2), stop=round(sl, 2),
+                rr_ratio=4.0,
+                reason=f"Bearish liquidity sweep — swept ${sweep['swept_level']:.0f}, "
+                       f"reclaimed {reclaim:.2f}%",
+                details=sweep, timestamp=time.time(),
+            )
+
+    def _check_bos(self, symbol: str, candles: list,
+                   close: float, atr_val: float) -> Optional[Signal]:
+        """Break of Structure: trend continuation after swing point break."""
+        bos = detect_bos(candles, lookback=20)
+        if not bos:
+            return None
+
+        direction = bos["direction"]
+        strength = bos.get("strength", 0)
+        confidence = min(88, 60 + strength * 40)
+        levels = compute_sl_tp(direction, close, atr_val, 0.8, 2.5)
+
+        return Signal(
+            strategy="bos", direction=direction,
+            confidence=round(confidence),
+            entry=close, target=levels["tp"], stop=levels["sl"],
+            rr_ratio=2.5,
+            reason=f"{'Bullish' if direction == 'BUY' else 'Bearish'} BOS — "
+                   f"broke ${bos['broken_level']:.0f} (strength {strength:.3f}%)",
+            details=bos, timestamp=time.time(),
+        )
+
+    def _check_choch(self, symbol: str, candles: list,
+                     close: float, atr_val: float) -> Optional[Signal]:
+        """Change of Character: early reversal detection against prior trend."""
+        choch = detect_choch(candles, lookback=20)
+        if not choch:
+            return None
+
+        direction = choch["direction"]
+        confidence = 82  # High confidence — structural shift
+        levels = compute_sl_tp(direction, close, atr_val, 1.0, 3.0)
+
+        return Signal(
+            strategy="choch", direction=direction,
+            confidence=confidence,
+            entry=close, target=levels["tp"], stop=levels["sl"],
+            rr_ratio=3.0,
+            reason=f"CHoCH — trend was {choch['trend_was']}, broke "
+                   f"${choch['broken_level']:.0f} → reversal {direction}",
+            details=choch, timestamp=time.time(),
+        )
 
     # ── Helpers ───────────────────────────────────────────────
 

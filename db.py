@@ -278,6 +278,64 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_news_events_ts ON news_events(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_news_events_traded ON news_events(traded)")
 
+    # ── FundingArb Tables ────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS funding_arb_positions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT NOT NULL,
+            symbol      TEXT NOT NULL,
+            long_exchange  TEXT NOT NULL,
+            short_exchange TEXT NOT NULL,
+            entry_diff_bps REAL NOT NULL,
+            position_usd   REAL NOT NULL,
+            status      TEXT DEFAULT 'open',
+            exit_diff_bps  REAL,
+            pnl_usd     REAL DEFAULT 0,
+            closed_at   TEXT,
+            long_trade_id  INTEGER,
+            short_trade_id INTEGER
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_arb_status ON funding_arb_positions(status)")
+
+    # ── HLCopier Tables ──────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS copier_positions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT NOT NULL,
+            whale_wallet TEXT NOT NULL,
+            symbol      TEXT NOT NULL,
+            side        TEXT NOT NULL,
+            whale_size  REAL NOT NULL,
+            copy_size   REAL NOT NULL,
+            entry_price REAL NOT NULL,
+            status      TEXT DEFAULT 'open',
+            exit_price  REAL,
+            pnl_usd     REAL DEFAULT 0,
+            closed_at   TEXT,
+            trade_id    INTEGER
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_copier_status ON copier_positions(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_copier_whale ON copier_positions(whale_wallet)")
+
+    # ── MacroTrader / WarTrader Tables ───────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS macro_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT NOT NULL,
+            event_name  TEXT NOT NULL,
+            event_type  TEXT NOT NULL,
+            severity    INTEGER DEFAULT 5,
+            direction   TEXT,
+            symbols     TEXT,
+            traded      INTEGER DEFAULT 0,
+            trade_id    INTEGER,
+            source      TEXT DEFAULT 'calendar'
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_macro_ts ON macro_events(ts)")
+
     # ── HyperBulk Tables ─────────────────────────────────────
     c.execute("""
         CREATE TABLE IF NOT EXISTS hb_users (
@@ -1739,6 +1797,127 @@ def mark_news_traded(event_id: int, trade_id: int):
     conn = get_conn()
     conn.execute(
         "UPDATE news_events SET traded=1, trade_id=? WHERE id=?",
+        (trade_id, event_id)
+    )
+    conn.commit()
+    release_conn(conn)
+
+
+# ── FundingArb Helpers ────────────────────────────────────────
+
+def save_arb_position(symbol: str, long_exchange: str, short_exchange: str,
+                      entry_diff_bps: float, position_usd: float,
+                      long_trade_id: int = 0, short_trade_id: int = 0) -> int:
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO funding_arb_positions
+               (ts, symbol, long_exchange, short_exchange, entry_diff_bps,
+                position_usd, long_trade_id, short_trade_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (datetime.utcnow().isoformat(), symbol, long_exchange,
+             short_exchange, entry_diff_bps, position_usd,
+             long_trade_id, short_trade_id)
+        )
+        conn.commit()
+        return cur.lastrowid or 0
+    finally:
+        release_conn(conn)
+
+
+def close_arb_position(arb_id: int, exit_diff_bps: float, pnl_usd: float):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE funding_arb_positions
+           SET status='closed', exit_diff_bps=?, pnl_usd=?, closed_at=?
+           WHERE id=?""",
+        (exit_diff_bps, pnl_usd, datetime.utcnow().isoformat(), arb_id)
+    )
+    conn.commit()
+    release_conn(conn)
+
+
+def get_open_arb_positions() -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM funding_arb_positions WHERE status='open'"
+    ).fetchall()
+    release_conn(conn)
+    return [dict(r) for r in rows]
+
+
+# ── HLCopier Helpers ─────────────────────────────────────────
+
+def save_copier_position(whale_wallet: str, symbol: str, side: str,
+                         whale_size: float, copy_size: float,
+                         entry_price: float, trade_id: int = 0) -> int:
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO copier_positions
+               (ts, whale_wallet, symbol, side, whale_size, copy_size,
+                entry_price, trade_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (datetime.utcnow().isoformat(), whale_wallet, symbol, side,
+             whale_size, copy_size, entry_price, trade_id)
+        )
+        conn.commit()
+        return cur.lastrowid or 0
+    finally:
+        release_conn(conn)
+
+
+def close_copier_position(cp_id: int, exit_price: float, pnl_usd: float):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE copier_positions
+           SET status='closed', exit_price=?, pnl_usd=?, closed_at=?
+           WHERE id=?""",
+        (exit_price, pnl_usd, datetime.utcnow().isoformat(), cp_id)
+    )
+    conn.commit()
+    release_conn(conn)
+
+
+def get_open_copier_positions(whale_wallet: str = None) -> list:
+    conn = get_conn()
+    if whale_wallet:
+        rows = conn.execute(
+            "SELECT * FROM copier_positions WHERE status='open' AND whale_wallet=?",
+            (whale_wallet,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM copier_positions WHERE status='open'"
+        ).fetchall()
+    release_conn(conn)
+    return [dict(r) for r in rows]
+
+
+# ── MacroTrader / WarTrader Helpers ──────────────────────────
+
+def save_macro_event(event_name: str, event_type: str, severity: int,
+                     direction: str = None, symbols: list = None,
+                     source: str = "calendar") -> int:
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """INSERT INTO macro_events
+               (ts, event_name, event_type, severity, direction, symbols, source)
+               VALUES (?,?,?,?,?,?,?)""",
+            (datetime.utcnow().isoformat(), event_name, event_type,
+             severity, direction, json.dumps(symbols or []), source)
+        )
+        conn.commit()
+        return cur.lastrowid or 0
+    finally:
+        release_conn(conn)
+
+
+def mark_macro_traded(event_id: int, trade_id: int):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE macro_events SET traded=1, trade_id=? WHERE id=?",
         (trade_id, event_id)
     )
     conn.commit()

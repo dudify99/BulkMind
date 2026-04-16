@@ -202,6 +202,7 @@ async def run_evoskill_loop(failures_path: str = "data/failures.json"):
     # Write initial skills if not present
     write_initial_skills()
     write_news_trader_skills()
+    write_all_agent_skills()
 
     try:
         # Import EvoSkill (must be installed separately)
@@ -240,6 +241,165 @@ async def run_evoskill_loop(failures_path: str = "data/failures.json"):
         print("⚠️ EvoSkill not installed. Clone https://github.com/sentient-agi/EvoSkill")
         print("   Running manual skill analysis instead...")
         await manual_skill_analysis(trajectories)
+
+
+# ── FundingArb EvoSkill ───────────────────────────────────────
+
+def funding_arb_scorer(question: str, predicted: str, ground_truth: str) -> float:
+    pred = predicted.strip().upper()
+    gt = ground_truth.strip().upper()
+    return 1.0 if pred == gt else 0.0
+
+FUNDING_ARB_SYSTEM_PROMPT = """
+You are FundingArb, a funding rate arbitrage agent for Bulk and Hyperliquid exchanges.
+
+Your job: Given funding rate differentials and market conditions, decide YES (open arb)
+or NO (skip) for a delta-neutral funding capture opportunity.
+
+Analyze:
+1. Funding rate differential magnitude and persistence
+2. Market volatility (high vol = more risk for delta-neutral)
+3. Spread/slippage cost vs expected funding income
+4. Duration of expected rate differential
+
+Respond with: YES or NO, followed by one line of reasoning.
+"""
+
+INITIAL_FUNDING_SKILLS = {
+    "diff_persistence": """
+# Diff Persistence Skill
+Only open arb when funding differential is likely to persist:
+- Check if the rate difference has been stable for at least 2 funding periods
+- Avoid one-time spikes caused by liquidation cascades
+- Prefer structural diffs (e.g., exchange congestion) over transient diffs
+""",
+    "cost_analysis": """
+# Cost Analysis Skill
+Account for all costs before opening arb:
+- Entry slippage on both legs (estimate 2-5 bps per leg)
+- Maker/taker fees on both exchanges
+- Exit slippage when closing
+- Total cost must be < expected funding income over hold period
+""",
+}
+
+
+# ── HLCopier EvoSkill ────────────────────────────────────────
+
+def copier_scorer(question: str, predicted: str, ground_truth: str) -> float:
+    pred = predicted.strip().upper()
+    gt = ground_truth.strip().upper()
+    return 1.0 if pred == gt else 0.0
+
+COPIER_SYSTEM_PROMPT = """
+You are HLCopier, a whale copy-trading agent for Hyperliquid.
+
+Your job: Given a whale's new position, decide YES (copy) or NO (skip).
+
+Analyze:
+1. Whale's historical win rate and PnL
+2. Position size relative to their portfolio
+3. Market conditions and timing
+4. Whether the move is a hedge or a directional bet
+
+Respond with: YES or NO, followed by one line of reasoning.
+"""
+
+INITIAL_COPIER_SKILLS = {
+    "whale_quality": """
+# Whale Quality Skill
+Not all whale trades should be copied:
+- Verify whale has a positive track record (check account value trend)
+- Large positions might be hedges, not directional bets — check for offsetting positions
+- Prefer wallets with consistent profits over those with one lucky trade
+""",
+}
+
+
+# ── MacroTrader EvoSkill ─────────────────────────────────────
+
+def macro_scorer(question: str, predicted: str, ground_truth: str) -> float:
+    pred = predicted.strip().upper()
+    gt = ground_truth.strip().upper()
+    return 1.0 if pred == gt else 0.0
+
+MACRO_TRADER_SYSTEM_PROMPT = """
+You are MacroTrader, an economic calendar trading agent for crypto markets.
+
+Your job: Given an upcoming macro event, decide YES (position before it)
+or NO (stay flat).
+
+Analyze:
+1. Event impact level and historical market reaction
+2. Current positioning and crowding
+3. Consensus expectations vs likely surprise direction
+4. Crypto correlation to traditional macro events
+
+Respond with: YES or NO, followed by one line of reasoning.
+"""
+
+INITIAL_MACRO_SKILLS = {
+    "event_playbook": """
+# Event Playbook Skill
+Standard crypto reactions to macro events:
+- FOMC dovish (rate cut/pause): BUY BTC — risk-on, dollar weakens
+- FOMC hawkish (rate hike/signal): SELL BTC — risk-off, dollar strengthens
+- CPI below expectations: BUY — rate cut expectations increase
+- CPI above expectations: SELL — tightening fears
+- NFP strong: ambiguous — can be risk-on (economy good) or risk-off (more hikes)
+- NFP weak: BUY if market sees rate cuts coming, SELL if recession fears dominate
+""",
+}
+
+
+# ── WarTrader EvoSkill ───────────────────────────────────────
+
+def war_scorer(question: str, predicted: str, ground_truth: str) -> float:
+    pred = predicted.strip().upper()
+    gt = ground_truth.strip().upper()
+    return 1.0 if pred == gt else 0.0
+
+WAR_TRADER_SYSTEM_PROMPT = """
+You are WarTrader, a geopolitical event trading agent for crypto markets.
+
+Your job: Given a geopolitical event, decide YES (trade it) or NO (skip).
+
+Analyze:
+1. Severity and potential for escalation
+2. Direct crypto market impact (sanctions, mining bans, etc.)
+3. Safe-haven demand dynamics (BTC as digital gold)
+4. Whether the event is already priced in
+
+Respond with: YES or NO, followed by one line of reasoning.
+"""
+
+INITIAL_WAR_SKILLS = {
+    "escalation_filter": """
+# Escalation Filter Skill
+Only trade geopolitical events with clear escalation trajectory:
+- New military action or mobilization → likely to persist, trade it
+- Diplomatic statement or "concern" from officials → likely noise, skip
+- Sanctions package → trade only if targeting major economy or crypto specifically
+- De-escalation or ceasefire → strong risk-on signal, BUY
+- Avoid trading on rumors — wait for confirmation from 2+ credible sources
+""",
+}
+
+
+def write_all_agent_skills(skills_dir: str = ".claude/skills"):
+    """Write initial skills for all agents."""
+    Path(skills_dir).mkdir(parents=True, exist_ok=True)
+    all_skills = {
+        **{f"funding_{k}": v for k, v in INITIAL_FUNDING_SKILLS.items()},
+        **{f"copier_{k}": v for k, v in INITIAL_COPIER_SKILLS.items()},
+        **{f"macro_{k}": v for k, v in INITIAL_MACRO_SKILLS.items()},
+        **{f"war_{k}": v for k, v in INITIAL_WAR_SKILLS.items()},
+    }
+    for name, content in all_skills.items():
+        path = Path(skills_dir) / f"{name}.md"
+        if not path.exists():
+            path.write_text(content)
+            print(f"📝 Wrote skill: {name}.md")
 
 
 async def manual_skill_analysis(trajectories: list):
