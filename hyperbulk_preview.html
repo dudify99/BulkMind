@@ -2550,20 +2550,10 @@ let candleSeries = null, volumeSeries = null, pnlSeries = null, pnlMarkers = [];
 let chartSymbol = 'BTC-USD', chartExchange = 'bulk';
 let chartsInitialized = false;
 
-// ── Demo boot sequence ──────────────────────────────────────────────────────
+// ── Demo live feed ticks (globe + feed panel + price display) ────────────────
+// Note: initGlobe / fetchMarket / fetchLeaderboard / fetchAchievements are
+// already called by the DOMContentLoaded in charts.js above.
 document.addEventListener('DOMContentLoaded', () => {
-  initGlobe();
-
-  // Prices
-  renderDemoMarket();
-  setInterval(renderDemoMarket, 5000);
-
-  // Leaderboard
-  fetchLeaderboard('daily');
-
-  // Achievements (locked until wallet connected)
-  fetchAchievements();
-
   // Simulate live feed ticks
   const symbols = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
   const prices  = { 'BTC-USD': 94500, 'ETH-USD': 3220, 'SOL-USD': 148 };
