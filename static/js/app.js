@@ -3,6 +3,38 @@ let wallet = null, user = null, symbol = 'BTC-USD', exchange = 'both', market = 
 let lbPeriod = 'daily';
 let marketInterval = null;
 
+// ── Privy config ─────────────────────────────────────────────────────────────
+// Get your free App ID at https://dashboard.privy.io
+// Set PRIVY_APP_ID in config.py or override window.PRIVY_APP_ID before this script.
+const PRIVY_APP_ID = window.PRIVY_APP_ID || null;
+let _privy = null;  // Privy client instance (null until SDK loads)
+
+// Load Privy SDK asynchronously via ESM; expose on _privy when ready.
+(async () => {
+  if (!PRIVY_APP_ID) {
+    console.info('[Privy] No App ID configured — wallet connect will use demo mode.');
+    return;
+  }
+  try {
+    const { PrivyClient } = await import(
+      'https://cdn.jsdelivr.net/npm/@privy-io/js-sdk-core@latest/+esm'
+    );
+    _privy = new PrivyClient({
+      appId: PRIVY_APP_ID,
+      config: {
+        loginMethods: ['email', 'google', 'twitter', 'discord', 'wallet'],
+        embeddedWallets: { createOnLogin: 'users-without-wallets' },
+      },
+    });
+    console.info('[Privy] SDK ready, appId:', PRIVY_APP_ID);
+    // Hide the "no App ID" notice
+    const n = document.getElementById('privy-setup-notice');
+    if (n) n.style.display = 'none';
+  } catch (e) {
+    console.warn('[Privy] SDK failed to load, falling back to demo mode:', e);
+  }
+})();
+
 const ACHIEVEMENTS_DEF = [
   { id: 'first_blood', emoji: '\u{1FA78}', name: 'First Blood', desc: 'Complete your first trade' },
   { id: 'sniper', emoji: '\u{1F3AF}', name: 'Sniper', desc: '5 winning trades in a row' },
@@ -65,42 +97,220 @@ function setExchange(e, el) { exchange = e; activatePill(el); }
 function setSize(v) { document.getElementById('size-input').value = v; }
 function setLbPeriod(p, el) { lbPeriod = p; activatePill(el); fetchLeaderboard(p); }
 
-// --- Wallet ---
+// ── Wallet / Privy ───────────────────────────────────────────────────────────
+
 async function connectWallet() {
-  if (wallet) { wallet = null; user = null; document.getElementById('btn-wallet').textContent = 'Connect Wallet'; document.getElementById('btn-wallet').classList.remove('connected'); return; }
+  if (wallet) {
+    // Disconnect
+    if (_privy) { try { await _privy.logout(); } catch(_) {} }
+    wallet = null; user = null;
+    const btn = document.getElementById('btn-wallet');
+    btn.textContent = 'Connect Wallet';
+    btn.classList.remove('connected');
+    return;
+  }
+  // Show modal — reset to email step
+  _privyReset();
   document.getElementById('wallet-modal').classList.add('show');
-  document.getElementById('wallet-input').focus();
+  // If no App ID, show setup notice and keep forms usable in demo mode
+  if (!PRIVY_APP_ID) {
+    const n = document.getElementById('privy-setup-notice');
+    if (n) n.style.display = '';
+  }
+  setTimeout(() => {
+    const inp = document.getElementById('privy-email');
+    if (inp) inp.focus();
+  }, 100);
 }
 
-function closeModal() { document.getElementById('wallet-modal').classList.remove('show'); }
+function closeModal() {
+  document.getElementById('wallet-modal').classList.remove('show');
+  _privyReset();
+}
 
-async function confirmConnect() {
-  const addr = document.getElementById('wallet-input').value.trim();
-  const name = document.getElementById('username-input').value.trim();
-  if (!addr) { showToast('Enter a wallet address', 'error'); return; }
+function _privyReset() {
+  const show = (id) => { const el = document.getElementById(id); if (el) el.style.display = ''; };
+  const hide = (id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
+  show('privy-step-email');
+  hide('privy-step-otp');
+  show('privy-step-social');
+  const emailEl = document.getElementById('privy-email');
+  const otpEl   = document.getElementById('privy-otp');
+  const errEmail = document.getElementById('privy-email-err');
+  const errOtp   = document.getElementById('privy-otp-err');
+  if (emailEl) emailEl.value = '';
+  if (otpEl)   otpEl.value   = '';
+  if (errEmail) errEmail.textContent = '';
+  if (errOtp)   errOtp.textContent   = '';
+  _setBtnLoading('privy-email-btn', false);
+  _setBtnLoading('privy-otp-btn', false);
+}
+
+function _setBtnLoading(id, loading, label) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.disabled = loading;
+  if (loading) {
+    btn.innerHTML = '<span class="privy-spinner"></span>Verifying…';
+  } else {
+    btn.innerHTML = label || (id === 'privy-otp-btn' ? 'Verify Code' : 'Continue with Email');
+  }
+}
+
+// ── Email OTP flow ────────────────────────────────────────────────────────────
+
+async function privySendCode() {
+  const email = (document.getElementById('privy-email')?.value || '').trim();
+  if (!email || !/\S+@\S+\.\S+/.test(email)) {
+    document.getElementById('privy-email-err').textContent = 'Enter a valid email address.';
+    return;
+  }
+  document.getElementById('privy-email-err').textContent = '';
+  _setBtnLoading('privy-email-btn', true);
+
+  if (_privy) {
+    try {
+      await _privy.auth.email.sendCode(email);
+    } catch (e) {
+      document.getElementById('privy-email-err').textContent = e?.message || 'Failed to send code.';
+      _setBtnLoading('privy-email-btn', false);
+      return;
+    }
+  }
+  // Show OTP step
+  document.getElementById('privy-step-email').style.display = 'none';
+  document.getElementById('privy-step-otp').style.display = '';
+  const lbl = document.getElementById('privy-email-label');
+  if (lbl) lbl.textContent = email;
+  _setBtnLoading('privy-email-btn', false);
+  setTimeout(() => document.getElementById('privy-otp')?.focus(), 80);
+}
+
+async function privyVerifyOtp() {
+  const email = (document.getElementById('privy-email')?.value || '').trim();
+  const code  = (document.getElementById('privy-otp')?.value || '').trim();
+  if (!code || code.length < 6) {
+    document.getElementById('privy-otp-err').textContent = 'Enter the 6-digit code.';
+    return;
+  }
+  document.getElementById('privy-otp-err').textContent = '';
+  _setBtnLoading('privy-otp-btn', true);
+
+  if (_privy) {
+    try {
+      const { user: u } = await _privy.auth.email.loginWithCode(email, code);
+      _onPrivyLogin(u);
+      return;
+    } catch (e) {
+      document.getElementById('privy-otp-err').textContent = e?.message || 'Invalid code.';
+      _setBtnLoading('privy-otp-btn', false);
+      return;
+    }
+  }
+  // Demo fallback — no Privy SDK
+  _onDemoConnect(email);
+}
+
+function privyBackToEmail() {
+  document.getElementById('privy-step-otp').style.display  = 'none';
+  document.getElementById('privy-step-email').style.display = '';
+  document.getElementById('privy-otp-err').textContent = '';
+}
+
+// ── OAuth (Google / Twitter / Discord) ───────────────────────────────────────
+
+async function privyOAuth(provider) {
+  if (_privy) {
+    try {
+      const { user: u } = await _privy.auth.oauth.loginWithOAuth(provider);
+      _onPrivyLogin(u);
+    } catch (e) {
+      showToast(e?.message || `${provider} login failed`, 'error');
+    }
+    return;
+  }
+  // Demo fallback
+  _onDemoConnect(provider + '_demo_' + Math.random().toString(36).slice(2, 7));
+}
+
+// ── External wallets ──────────────────────────────────────────────────────────
+
+async function privyMetaMask() {
+  if (_privy) {
+    try {
+      const { user: u } = await _privy.auth.wallets.loginWithMetaMask();
+      _onPrivyLogin(u);
+    } catch (e) {
+      showToast(e?.message || 'MetaMask connect failed', 'error');
+    }
+    return;
+  }
+  // Browser MetaMask fallback (no Privy)
+  if (window.ethereum) {
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      if (accounts[0]) _onDemoConnect(accounts[0]);
+    } catch (e) { showToast('MetaMask rejected', 'error'); }
+    return;
+  }
+  _onDemoConnect('0x' + Math.random().toString(16).slice(2, 42));
+}
+
+async function privyPhantom() {
+  if (_privy) {
+    try {
+      const { user: u } = await _privy.auth.wallets.loginWithPhantom();
+      _onPrivyLogin(u);
+    } catch (e) {
+      showToast(e?.message || 'Phantom connect failed', 'error');
+    }
+    return;
+  }
+  // Browser Phantom fallback
+  if (window.solana?.isPhantom) {
+    try {
+      const resp = await window.solana.connect();
+      _onDemoConnect(resp.publicKey.toString());
+    } catch (e) { showToast('Phantom rejected', 'error'); }
+    return;
+  }
+  _onDemoConnect('Ph' + Math.random().toString(36).slice(2, 14).toUpperCase());
+}
+
+// ── Shared login handler ──────────────────────────────────────────────────────
+
+function _onPrivyLogin(privyUser) {
+  // Prefer Solana wallet (app is Solana-native), then Ethereum, then user ID
+  const solWallet = privyUser.linkedAccounts?.find(a => a.type === 'solana_wallet');
+  const ethWallet = privyUser.linkedAccounts?.find(a => a.type === 'ethereum_wallet' || a.type === 'wallet');
+  const addr = solWallet?.address || ethWallet?.address || privyUser.id;
+  _finishConnect(addr, privyUser.email?.address || null);
+}
+
+function _onDemoConnect(addr) {
+  _finishConnect(addr, null);
+}
+
+async function _finishConnect(addr, email) {
+  wallet = addr;
   closeModal();
+  const btn = document.getElementById('btn-wallet');
+  btn.textContent = addr.slice(0, 4) + '…' + addr.slice(-4);
+  btn.classList.add('connected');
+  showToast('Wallet connected!', 'success');
+
+  // Register with backend
   try {
+    const username = email ? email.split('@')[0] : addr.slice(0, 8);
     const res = await fetch(API + '/api/hb/register', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wallet: addr, username: name || addr.slice(0, 8) })
+      body: JSON.stringify({ wallet: addr, username }),
     });
-    if (!res.ok) throw new Error('Registration failed');
-    const data = await res.json();
-    wallet = addr;
-    user = data;
-    const btn = document.getElementById('btn-wallet');
-    btn.textContent = addr.slice(0, 4) + '...' + addr.slice(-4);
-    btn.classList.add('connected');
-    showToast('Wallet connected!', 'success');
-    fetchOpenTrades();
-    fetchPortfolio();
-  } catch (e) {
-    wallet = addr;
-    const btn = document.getElementById('btn-wallet');
-    btn.textContent = addr.slice(0, 4) + '...' + addr.slice(-4);
-    btn.classList.add('connected');
-    showToast('Connected (offline mode)', 'info');
-  }
+    if (res.ok) user = await res.json();
+  } catch (_) {}
+
+  fetchOpenTrades();
+  fetchPortfolio();
 }
 
 // --- Portfolio ---

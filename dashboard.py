@@ -491,11 +491,17 @@ class Dashboard:
     # ── HyperBulk Handlers ──────────────────────────────────────
 
     async def _serve_hyperbulk(self, request):
-        """Serve the HyperBulk frontend page."""
+        """Serve the HyperBulk frontend with PRIVY_APP_ID injected."""
+        from config import PRIVY_APP_ID
         page = STATIC_DIR / "hyperbulk.html"
-        if page.exists():
-            return web.FileResponse(page)
-        return web.Response(text="HyperBulk — static/hyperbulk.html not found", status=404)
+        if not page.exists():
+            return web.Response(text="HyperBulk — static/hyperbulk.html not found", status=404)
+        if PRIVY_APP_ID:
+            html = page.read_text()
+            inject = f'<script>window.PRIVY_APP_ID="{PRIVY_APP_ID}";</script>'
+            html = html.replace("<head>", "<head>" + inject, 1)
+            return web.Response(text=html, content_type="text/html")
+        return web.FileResponse(page)
 
     async def _hb_register(self, request):
         """Register a new HyperBulk user."""

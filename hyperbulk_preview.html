@@ -111,17 +111,41 @@ a{color:var(--accent);text-decoration:none}
 .toast.error{border-color:var(--red);color:var(--red)}
 .toast.info{border-color:var(--purple);color:var(--purple)}
 
-/* Modal */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:200}
+/* Modal — Privy */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:200;padding:16px}
 .modal-overlay.show{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;width:90%;max-width:380px}
-.modal h2{font-size:1.2rem;margin-bottom:6px}
-.modal p{font-size:.8rem;color:var(--text2);margin-bottom:18px}
-.modal input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:var(--radius);font-size:.9rem;margin-bottom:12px;font-family:monospace}
-.modal input:focus{outline:none;border-color:var(--accent)}
-.modal-actions{display:flex;gap:10px}
-.modal-actions button{flex:1;padding:12px;border:none;border-radius:var(--radius);font-weight:700;cursor:pointer;font-size:.85rem}
-.modal-actions .btn-cancel{background:var(--bg);color:var(--text2);border:1px solid var(--border)}
+.privy-modal{background:var(--surface);border:1px solid var(--border);border-radius:18px;width:100%;max-width:400px;overflow:hidden;animation:modalIn .2s ease}
+@keyframes modalIn{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+.privy-header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 0}
+.privy-header-title{font-size:1rem;font-weight:700}
+.privy-header-close{background:none;border:none;color:var(--text2);font-size:1.2rem;cursor:pointer;padding:4px 8px;border-radius:6px;line-height:1}
+.privy-header-close:hover{background:var(--bg);color:var(--text)}
+.privy-body{padding:20px}
+.privy-hint{font-size:.8rem;color:var(--text2);margin-bottom:12px}
+.privy-input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:13px 14px;border-radius:var(--radius);font-size:.95rem;margin-bottom:10px;outline:none;transition:border-color .2s}
+.privy-input:focus{border-color:var(--accent)}
+.privy-otp-input{text-align:center;letter-spacing:6px;font-size:1.3rem;font-family:'Courier New',monospace;font-weight:700;color:var(--accent)}
+.privy-btn-main{width:100%;padding:13px;background:linear-gradient(135deg,var(--accent),#00cc6a);color:#000;border:none;border-radius:var(--radius);font-size:.95rem;font-weight:700;cursor:pointer;margin-bottom:8px;transition:filter .2s}
+.privy-btn-main:hover{filter:brightness(1.08)}
+.privy-btn-main:disabled{opacity:.4;cursor:not-allowed}
+.privy-btn-ghost{width:100%;padding:10px;background:none;border:1px solid var(--border);color:var(--text2);border-radius:var(--radius);font-size:.8rem;cursor:pointer;margin-bottom:4px}
+.privy-btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.privy-error{font-size:.78rem;color:var(--red);margin-bottom:8px;min-height:16px}
+.privy-or{display:flex;align-items:center;gap:10px;margin:14px 0;font-size:.72rem;color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
+.privy-or::before,.privy-or::after{content:'';flex:1;height:1px;background:var(--border)}
+.privy-social-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px}
+.privy-social-btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);font-size:.78rem;font-weight:600;cursor:pointer;transition:all .2s}
+.privy-social-btn:hover{border-color:var(--accent);color:var(--accent)}
+.privy-social-btn svg{width:16px;height:16px;flex-shrink:0}
+.privy-wallet-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.privy-wallet-btn{display:flex;align-items:center;justify-content:center;gap:8px;padding:13px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s}
+.privy-wallet-btn:hover{border-color:var(--purple);color:var(--purple)}
+.privy-wallet-btn svg{width:20px;height:20px}
+.privy-setup-notice{background:rgba(124,77,255,.08);border:1px solid rgba(124,77,255,.3);border-radius:var(--radius);padding:12px;font-size:.75rem;color:var(--text2);margin-top:12px;line-height:1.5}
+.privy-setup-notice a{color:var(--accent)}
+.privy-setup-notice code{color:var(--purple);font-family:monospace;background:var(--bg);padding:1px 4px;border-radius:3px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.privy-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,.3);border-top-color:#000;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
 .modal-actions .btn-confirm{background:var(--accent);color:#000}
 
 /* Live Feed */
@@ -699,14 +723,61 @@ a{color:var(--accent);text-decoration:none}
 
 <!-- Wallet Modal -->
 <div class="modal-overlay" id="wallet-modal">
-  <div class="modal">
-    <h2>Connect Wallet</h2>
-    <p>Enter any wallet address to start trading in demo mode.</p>
-    <input type="text" id="wallet-input" placeholder="Wallet address or username">
-    <input type="text" id="username-input" placeholder="Display name (optional)">
-    <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-confirm" onclick="confirmConnect()">Connect</button>
+  <div class="privy-modal">
+    <div class="privy-header">
+      <span class="privy-header-title">Connect to HyperBulk</span>
+      <button class="privy-header-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="privy-body">
+      <div id="privy-step-email">
+        <p class="privy-hint">Enter your email to sign in or create an account</p>
+        <input type="email" id="privy-email" class="privy-input" placeholder="you@example.com"
+               onkeydown="if(event.key==='Enter')privySendCode()">
+        <div class="privy-error" id="privy-email-err"></div>
+        <button class="privy-btn-main" id="privy-email-btn" onclick="privySendCode()">Continue with Email</button>
+      </div>
+      <div id="privy-step-otp" style="display:none">
+        <p class="privy-hint">We sent a 6-digit code to <strong id="privy-email-label"></strong></p>
+        <input type="text" id="privy-otp" class="privy-input privy-otp-input"
+               placeholder="——————" maxlength="6" inputmode="numeric"
+               onkeydown="if(event.key==='Enter')privyVerifyOtp()">
+        <div class="privy-error" id="privy-otp-err"></div>
+        <button class="privy-btn-main" id="privy-otp-btn" onclick="privyVerifyOtp()">Verify Code</button>
+        <button class="privy-btn-ghost" onclick="privyBackToEmail()">← Change email</button>
+      </div>
+      <div id="privy-step-social">
+        <div class="privy-or"><span>or continue with</span></div>
+        <div class="privy-social-grid">
+          <button class="privy-social-btn" onclick="privyOAuth('google')">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+            Google
+          </button>
+          <button class="privy-social-btn" onclick="privyOAuth('twitter')">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+            Twitter
+          </button>
+          <button class="privy-social-btn" onclick="privyOAuth('discord')">
+            <svg viewBox="0 0 24 24" fill="#5865F2"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+            Discord
+          </button>
+        </div>
+        <div class="privy-or"><span>or connect wallet</span></div>
+        <div class="privy-wallet-grid">
+          <button class="privy-wallet-btn" onclick="privyMetaMask()">
+            <svg viewBox="0 0 40 40" fill="none"><path d="M34.7 4L22.1 13.3l2.3-5.4L34.7 4z" fill="#E2761B"/><path d="M5.3 4l12.5 9.4-2.2-5.5L5.3 4z" fill="#E4761B"/></svg>
+            MetaMask
+          </button>
+          <button class="privy-wallet-btn" onclick="privyPhantom()">
+            <svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="20" fill="#AB9FF2"/><path d="M29.2 19.8c0 5.2-4.5 9.5-10 9.5-5.6 0-10-4.3-10-9.5S13.6 10.3 19.2 10.3c5.5 0 10 4.3 10 9.5z" fill="white"/></svg>
+            Phantom
+          </button>
+        </div>
+        <div class="privy-setup-notice">
+          <strong>Preview mode</strong> — all methods connect in demo.
+          Set <code>PRIVY_APP_ID</code> env var for real auth via
+          <a href="https://dashboard.privy.io" target="_blank">dashboard.privy.io</a>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -781,34 +852,109 @@ function setExchange(e, el) { exchange = e; activatePill(el); }
 function setSize(v) { document.getElementById('size-input').value = v; }
 function setLbPeriod(p, el) { lbPeriod = p; activatePill(el); fetchLeaderboard(p); }
 
-async function connectWallet() {
-  if (wallet) { wallet = null; user = null; document.getElementById('btn-wallet').textContent = 'Connect Wallet'; document.getElementById('btn-wallet').classList.remove('connected'); return; }
-  document.getElementById('wallet-modal').classList.add('show');
-  document.getElementById('wallet-input').focus();
-}
-function closeModal() { document.getElementById('wallet-modal').classList.remove('show'); }
+// ── Privy (preview = always demo mode, no App ID needed) ─────────────────────
+const PRIVY_APP_ID = null;  // Set window.PRIVY_APP_ID before loading for real auth
+let _privy = null;
 
-async function confirmConnect() {
-  const addr = document.getElementById('wallet-input').value.trim() || 'demo_' + Math.random().toString(36).slice(2, 8);
-  closeModal();
-  wallet = addr;
+function _privyReset() {
+  const show = (id) => { const el = document.getElementById(id); if(el) el.style.display=''; };
+  const hide = (id) => { const el = document.getElementById(id); if(el) el.style.display='none'; };
+  show('privy-step-email'); hide('privy-step-otp'); show('privy-step-social');
+  ['privy-email','privy-otp'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  ['privy-email-err','privy-otp-err'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent=''; });
+  _setBtnLoading('privy-email-btn', false); _setBtnLoading('privy-otp-btn', false);
+}
+function _setBtnLoading(id, loading) {
+  const btn = document.getElementById(id); if(!btn) return;
+  btn.disabled = loading;
+  btn.innerHTML = loading ? '<span class="privy-spinner"></span>Verifying…'
+    : (id==='privy-otp-btn' ? 'Verify Code' : 'Continue with Email');
+}
+
+async function connectWallet() {
+  if (wallet) {
+    wallet = null; user = null;
+    const btn = document.getElementById('btn-wallet');
+    btn.textContent = 'Connect Wallet'; btn.classList.remove('connected');
+    return;
+  }
+  _privyReset();
+  document.getElementById('wallet-modal').classList.add('show');
+  setTimeout(() => document.getElementById('privy-email')?.focus(), 100);
+}
+function closeModal() { document.getElementById('wallet-modal').classList.remove('show'); _privyReset(); }
+
+// Email OTP (demo — no real send)
+async function privySendCode() {
+  const email = (document.getElementById('privy-email')?.value||'').trim();
+  if (!email || !/\S+@\S+\.\S+/.test(email)) {
+    document.getElementById('privy-email-err').textContent = 'Enter a valid email.'; return;
+  }
+  document.getElementById('privy-email-err').textContent = '';
+  document.getElementById('privy-step-email').style.display = 'none';
+  document.getElementById('privy-step-otp').style.display = '';
+  const lbl = document.getElementById('privy-email-label'); if(lbl) lbl.textContent = email;
+  showToast('Code sent! (preview: use any 6 digits)', 'info');
+  setTimeout(() => document.getElementById('privy-otp')?.focus(), 80);
+}
+async function privyVerifyOtp() {
+  const email = (document.getElementById('privy-email')?.value||'').trim();
+  const code  = (document.getElementById('privy-otp')?.value||'').trim();
+  if (!code || code.length < 6) { document.getElementById('privy-otp-err').textContent = 'Enter 6 digits.'; return; }
+  _setBtnLoading('privy-otp-btn', true);
+  await new Promise(r => setTimeout(r, 600));  // simulate verify
+  _finishConnect('demo_' + email.split('@')[0] + '_' + Math.random().toString(36).slice(2,5), email);
+}
+function privyBackToEmail() {
+  document.getElementById('privy-step-otp').style.display = 'none';
+  document.getElementById('privy-step-email').style.display = '';
+}
+
+// OAuth buttons (demo)
+async function privyOAuth(provider) {
+  showToast('Connecting via ' + provider + '…', 'info');
+  await new Promise(r => setTimeout(r, 700));
+  _finishConnect(provider + '_' + Math.random().toString(36).slice(2,10), null);
+}
+
+// Wallet buttons
+async function privyMetaMask() {
+  if (window.ethereum) {
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      if (accounts[0]) { _finishConnect(accounts[0], null); return; }
+    } catch(e) { showToast('MetaMask rejected', 'error'); return; }
+  }
+  _finishConnect('0x' + Math.random().toString(16).slice(2,42), null);
+}
+async function privyPhantom() {
+  if (window.solana?.isPhantom) {
+    try {
+      const resp = await window.solana.connect();
+      _finishConnect(resp.publicKey.toString(), null); return;
+    } catch(e) { showToast('Phantom rejected', 'error'); return; }
+  }
+  _finishConnect('PHM' + Math.random().toString(36).slice(2,14).toUpperCase(), null);
+}
+
+function _finishConnect(addr, email) {
+  wallet = addr; closeModal();
   const btn = document.getElementById('btn-wallet');
-  btn.textContent = addr.slice(0, 4) + '...' + addr.slice(-4);
+  btn.textContent = addr.slice(0,4) + '…' + addr.slice(-4);
   btn.classList.add('connected');
-  showToast('Wallet connected (demo mode)', 'success');
-  // Demo portfolio
-  document.getElementById('s-pnl').textContent = '$' + (Math.random() * 4000 - 500).toFixed(2);
-  document.getElementById('s-winrate').textContent = (55 + Math.random() * 20).toFixed(1) + '%';
-  document.getElementById('s-trades').textContent = Math.floor(20 + Math.random() * 80);
-  document.getElementById('s-streak').textContent = Math.floor(Math.random() * 7);
-  document.getElementById('s-xp').textContent = Math.floor(200 + Math.random() * 1800);
-  document.getElementById('s-level').textContent = Math.floor(3 + Math.random() * 10);
+  showToast('Wallet connected!', 'success');
+  // Demo portfolio stats
+  document.getElementById('s-pnl').textContent = '$' + (Math.random()*4000-500).toFixed(2);
+  document.getElementById('s-winrate').textContent = (55+Math.random()*20).toFixed(1)+'%';
+  document.getElementById('s-trades').textContent = Math.floor(20+Math.random()*80);
+  document.getElementById('s-streak').textContent = Math.floor(Math.random()*7);
+  document.getElementById('s-xp').textContent = Math.floor(200+Math.random()*1800);
+  document.getElementById('s-level').textContent = Math.floor(3+Math.random()*10);
   fetchAchievements();
 }
 
 async function fetchPortfolio() {
-  if (!wallet) return;
-  // Already rendered in confirmConnect
+  // Stats already set in _finishConnect for preview
 }
 
 async function fetchAchievements() {

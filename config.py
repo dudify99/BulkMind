@@ -17,7 +17,11 @@ BULK_PRIVATE_KEY   = os.getenv("BULK_PRIVATE_KEY", "")
 HL_PRIVATE_KEY     = os.getenv("HL_PRIVATE_KEY", "")       # Hyperliquid (EVM key)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
-ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
+
+# ── Privy Wallet Auth ─────────────────────────────────────────
+# Sign up free at https://dashboard.privy.io → Create App → copy App ID
+PRIVY_APP_ID = os.getenv("PRIVY_APP_ID", "")   # e.g. "cm1abc2def3ghi"
 
 # ── Discord ──────────────────────────────────────────────────
 DISCORD_WEBHOOK_URL  = os.getenv("DISCORD_WEBHOOK_URL", "")
