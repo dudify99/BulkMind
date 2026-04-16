@@ -235,19 +235,16 @@ class HLCopier:
             f"Active: `{len(get_open_copier_positions())}`"
         )
 
-    # ── EvoSkill: Export failure trajectories ────────────────
-
     def export_failure_trajectories(self,
                                     output_path: str = "data/copier_failures.json"):
-        """Export losing copy trades for EvoSkill analysis."""
+        """Export losing copy trades as EvoSkill failure trajectories."""
         import db as _db
         conn = _db.get_conn()
         rows = conn.execute(
             """SELECT t.*, t.signal_data FROM trades t
                WHERE t.agent LIKE ? AND t.status='LOSS'
                ORDER BY t.ts DESC LIMIT 100""",
-            (f"{AGENT_NAME}:%",)
-        ).fetchall()
+            (f"{AGENT_NAME}:%",)).fetchall()
         _db.release_conn(conn)
 
         trajectories = []
@@ -264,18 +261,14 @@ class HLCopier:
                     "tp": d["tp_price"], "exit": d["exit_price"],
                     "pnl_pct": d["pnl_pct"],
                     "whale_notional": signal.get("whale_notional"),
-                    "whale_size": signal.get("whale_size"),
-                    "signal": signal,
+                    "whale_size": signal.get("whale_size"), "signal": signal,
                 }
             })
-
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(trajectories, f, indent=2)
-        print(f"Exported {len(trajectories)} HLCopier failure trajectories -> {output_path}")
+        print(f"Exported {len(trajectories)} HLCopier failures -> {output_path}")
         return output_path
-
-    # ── Main Loop ────────────────────────────────────────────
 
     async def run(self):
         print(f"[{AGENT_NAME}] Started — watching {len(COPIER_WALLETS)} whale wallets "

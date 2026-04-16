@@ -2,11 +2,7 @@
 WarTrader — Geopolitical Event Trading Agent (Multi-Exchange)
 Strategy: Monitor geopolitical news (wars, sanctions, tariffs, coups),
 classify severity with Claude, trade crypto on risk-on/risk-off dynamics.
-
-Risk model:
-  RISK_OFF (escalation, sanctions, nuclear) → SELL BTC
-  RISK_ON  (ceasefire, de-escalation, safe haven) → BUY BTC
-  Wider SL (2x ATR) for geopolitical volatility, 3:1 R:R
+RISK_OFF → SELL, RISK_ON → BUY. Wider SL (2x ATR), 3:1 R:R.
 """
 
 import asyncio, json, time, re, hashlib, aiohttp
@@ -27,11 +23,8 @@ from config import (
 )
 
 AGENT_NAME = "WarTrader"
-GEO_RSS_FEEDS = [
-    ("reuters_world", "https://feeds.reuters.com/Reuters/worldNews"),
-    ("bbc_news",      "http://feeds.bbci.co.uk/news/rss.xml"),
-]
-
+GEO_RSS_FEEDS = [("reuters_world", "https://feeds.reuters.com/Reuters/worldNews"),
+                  ("bbc_news",      "http://feeds.bbci.co.uk/news/rss.xml")]
 
 class WarTrader:
     """Trades crypto based on geopolitical event classification."""
@@ -45,7 +38,6 @@ class WarTrader:
         self.open_trades: Dict[int, dict] = {}
 
     # ── News Fetching ─────────────────────────────────────────
-
     async def _fetch_cryptopanic(self) -> List[dict]:
         """Fetch hot news from CryptoPanic API."""
         params: dict = {"filter": "hot", "kind": "news"}
@@ -68,7 +60,6 @@ class WarTrader:
         except Exception as e:
             print(f"  [WarTrader] CryptoPanic fetch error: {e}")
             return []
-
     async def _fetch_rss(self, name: str, url: str) -> List[dict]:
         """Fetch and parse RSS feed with simple regex (no feedparser)."""
         try:
@@ -96,11 +87,9 @@ class WarTrader:
         except Exception as e:
             print(f"  [WarTrader] RSS {name} fetch error: {e}")
             return []
-
     def _matches_keywords(self, text: str) -> bool:
         lower = text.lower()
         return any(kw in lower for kw in WAR_KEYWORDS)
-
     async def fetch_geopolitical_news(self) -> List[dict]:
         """Aggregate geopolitical news from all sources, filter by keywords, dedup."""
         tasks = [self._fetch_cryptopanic(),
@@ -123,7 +112,6 @@ class WarTrader:
         return fresh
 
     # ── LLM Classification ────────────────────────────────────
-
     async def classify_event(self, article: dict) -> Optional[dict]:
         """Use Claude to classify geopolitical event severity and direction."""
         if not ANTHROPIC_API_KEY:
@@ -171,7 +159,6 @@ class WarTrader:
         return classification
 
     # ── Signal Generation ─────────────────────────────────────
-
     async def get_signal(self, classification: dict,
                          venue: ExchangeVenue) -> Optional[dict]:
         """Build trade signal: RISK_OFF->SELL, RISK_ON->BUY. 2x ATR SL, 3:1 R:R."""
@@ -205,7 +192,6 @@ class WarTrader:
         }
 
     # ── Trade Execution ───────────────────────────────────────
-
     async def execute_signal(self, signal: dict, venue: ExchangeVenue,
                              event_id: int) -> Optional[int]:
         """Place bracket order and record the trade."""
@@ -243,7 +229,6 @@ class WarTrader:
         return trade_id
 
     # ── Trade Management ──────────────────────────────────────
-
     def _venue_by_name(self, name: str) -> Optional[ExchangeVenue]:
         for v in self.venues:
             if v.name == name:
