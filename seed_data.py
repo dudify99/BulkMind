@@ -17,7 +17,7 @@ Run once to populate dashboard: python seed_data.py
 
 import json
 from datetime import datetime
-from db import init_db, get_conn, save_candle, log_latency, log_issue
+from db import init_db, get_conn, release_conn, save_candle, log_latency, log_issue
 
 FETCH_TS = "2026-03-27T00:50:00Z"
 
@@ -282,7 +282,7 @@ def seed_tickers():
             (FETCH_TS, symbol, 0.0, None)
         )
     conn.commit()
-    conn.close()
+    release_conn(conn)
     print(f"  {len(TICKERS)} ticker snapshots stored")
 
 
@@ -314,7 +314,7 @@ def seed_orderbook():
              round(spread_bps, 2), 0, f"ask_depth_usd={round(ask_depth_usd,2)},bid_depth_usd={round(bid_depth_usd,2)}")
         )
         conn.commit()
-        conn.close()
+        release_conn(conn)
 
         print(f"  {symbol}: spread={spread:.2f} ({spread_bps:.1f}bps), "
               f"ask_depth=${ask_depth_usd:,.0f}, bid_depth=${bid_depth_usd:,.0f}")
@@ -389,7 +389,7 @@ def seed_agent_performance():
         (FETCH_TS, "BreakoutBot", 0, 0, 0, 0.0, 0.0, 0.0, "v0.1-initial")
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
     print("  BreakoutBot performance record created")
 
 
@@ -427,7 +427,7 @@ def main():
     latency = conn.execute("SELECT COUNT(*) as c FROM latency_log").fetchone()["c"]
     issues = conn.execute("SELECT COUNT(*) as c FROM issues").fetchone()["c"]
     exec_q = conn.execute("SELECT COUNT(*) as c FROM execution_quality").fetchone()["c"]
-    conn.close()
+    release_conn(conn)
 
     print("=== DB Summary ===")
     print(f"  Candles:            {candles}")

@@ -1,21 +1,61 @@
 """
 BulkMind Database Layer
 Stores: latency logs, trade history, issues, agent performance
+Thread-safe connection pool with WAL mode for async concurrency.
 """
 
 import sqlite3
 import json
+import threading
+from queue import Queue, Empty
 from datetime import datetime, timedelta
 from typing import Optional
 from pathlib import Path
 from config import DB_PATH
 
+# ── Connection Pool ──────────────────────────────────────────────
+# Reuses connections instead of opening/closing per call.
+# WAL mode allows concurrent reads while a write is in progress.
 
-def get_conn():
+_pool: Queue = Queue(maxsize=8)
+_pool_lock = threading.Lock()
+
+
+def _create_conn() -> sqlite3.Connection:
+    """Create a new SQLite connection with optimal settings."""
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
+
+
+def get_conn() -> sqlite3.Connection:
+    """Get a connection from the pool, creating one if needed."""
+    try:
+        conn = _pool.get_nowait()
+        # Verify connection is still alive
+        try:
+            conn.execute("SELECT 1")
+        except Exception:
+            conn = _create_conn()
+        return conn
+    except Empty:
+        return _create_conn()
+
+
+def release_conn(conn: sqlite3.Connection):
+    """Return a connection to the pool instead of closing it."""
+    try:
+        _pool.put_nowait(conn)
+    except Exception:
+        # Pool is full, close the connection
+        try:
+            release_conn(conn)
+        except Exception:
+            pass
 
 
 def init_db():
@@ -444,7 +484,7 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_traders_ts ON traders(ts)")
 
     conn.commit()
-    conn.close()
+    release_conn(conn)
     print("✅ Database initialized")
 
 
@@ -457,7 +497,7 @@ def log_latency(endpoint: str, latency_ms: float, status_code: int = None, error
         (datetime.utcnow().isoformat(), endpoint, latency_ms, status_code, error)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def log_issue(severity: str, category: str, title: str, details: str = None):
@@ -467,7 +507,7 @@ def log_issue(severity: str, category: str, title: str, details: str = None):
         (datetime.utcnow().isoformat(), severity, category, title, details)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
     print(f"🚨 ISSUE [{severity}] {title}")
 
 
@@ -485,7 +525,7 @@ def log_trade(agent: str, symbol: str, side: str, entry_price: float,
     )
     trade_id = cur.lastrowid
     conn.commit()
-    conn.close()
+    release_conn(conn)
     return trade_id
 
 
@@ -493,7 +533,7 @@ def close_trade(trade_id: int, exit_price: float, status: str):
     conn = get_conn()
     row = conn.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
     if not row:
-        conn.close()
+        release_conn(conn)
         return
 
     side = row["side"]
@@ -513,7 +553,7 @@ def close_trade(trade_id: int, exit_price: float, status: str):
         (exit_price, datetime.utcnow().isoformat(), pnl_usd, pnl_pct, status, trade_id)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
     return pnl_usd
 
 
@@ -527,7 +567,7 @@ def save_candle(symbol: str, timeframe: int, ts: str,
         (ts, symbol, timeframe, o, h, l, c, v)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def get_candles(symbol: str, timeframe: int, limit: int = 100) -> list:
@@ -537,7 +577,7 @@ def get_candles(symbol: str, timeframe: int, limit: int = 100) -> list:
            ORDER BY ts DESC LIMIT ?""",
         (symbol, timeframe, limit)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in reversed(rows)]
 
 
@@ -551,7 +591,7 @@ def get_open_trades(agent: str = None) -> list:
         rows = conn.execute(
             "SELECT * FROM trades WHERE status='OPEN'"
         ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -567,7 +607,7 @@ def get_agent_stats(agent: str) -> dict:
            FROM trades WHERE agent=? AND status != 'OPEN'""",
         (agent,)
     ).fetchone()
-    conn.close()
+    release_conn(conn)
     return dict(row) if row else {}
 
 
@@ -595,7 +635,7 @@ def get_top_traders(hours: int = 24, limit: int = 50) -> dict:
         (f"-{hours} hours", limit)
     ).fetchall()
 
-    conn.close()
+    release_conn(conn)
     return {
         "profitable": [dict(r) for r in profitable],
         "losers": [dict(r) for r in losers],
@@ -613,7 +653,7 @@ def search_wallets(query: str, limit: int = 20) -> list:
            GROUP BY wallet ORDER BY total_pnl DESC LIMIT ?""",
         (f"%{query}%", limit)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -652,7 +692,7 @@ def get_wallet_profile(wallet: str) -> dict:
         (wallet,)
     ).fetchall()
 
-    conn.close()
+    release_conn(conn)
 
     return {
         "wallet": wallet,
@@ -742,11 +782,11 @@ def get_leaderboard(tab: str = "top_traders", period: str = "24h", limit: int = 
         """
         params.append(limit)
     else:
-        conn.close()
+        release_conn(conn)
         return []
 
     rows = conn.execute(query, params).fetchall()
-    conn.close()
+    release_conn(conn)
 
     results = []
     for i, r in enumerate(rows):
@@ -810,7 +850,7 @@ def get_analytics() -> dict:
            GROUP BY symbol ORDER BY vol DESC LIMIT 10"""
     ).fetchall()
 
-    conn.close()
+    release_conn(conn)
 
     return {
         "total_trades": total_trades,
@@ -847,7 +887,7 @@ def get_whales(min_balance: float = 50000) -> list:
         (min_balance,)
     ).fetchall()
 
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -864,7 +904,7 @@ def log_observed_trade(symbol: str, side: str, price: float, size: float,
          maker, taker, reason, raw_data)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def log_liquidation(symbol: str, side: str, price: float, size: float,
@@ -877,7 +917,7 @@ def log_liquidation(symbol: str, side: str, price: float, size: float,
          value_usd, wallet, raw_data)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def upsert_discovered_wallet(wallet: str):
@@ -889,7 +929,7 @@ def upsert_discovered_wallet(wallet: str):
         (wallet, datetime.utcnow().isoformat())
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def get_pending_wallets(limit: int = 20) -> list:
@@ -902,7 +942,7 @@ def get_pending_wallets(limit: int = 20) -> list:
            LIMIT ?""",
         (limit,)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [r["wallet"] for r in rows]
 
 
@@ -914,7 +954,7 @@ def mark_wallet_profiled(wallet: str):
         (datetime.utcnow().isoformat(), wallet)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def upsert_wallet_balance(wallet: str, balance_usd: float, equity_usd: float,
@@ -928,7 +968,7 @@ def upsert_wallet_balance(wallet: str, balance_usd: float, equity_usd: float,
          datetime.utcnow().isoformat())
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def upsert_trader_record(wallet: str, symbol: str, side: str,
@@ -942,7 +982,7 @@ def upsert_trader_record(wallet: str, symbol: str, side: str,
          round(pnl_usd, 2), round(pnl_pct, 2), round(volume_usd, 2), trades_count)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def get_liquidation_stats(hours: int = 24) -> dict:
@@ -957,7 +997,7 @@ def get_liquidation_stats(hours: int = 24) -> dict:
            FROM liquidations WHERE side='SHORT' AND ts > datetime('now', ?)""",
         (f"-{hours} hours",)
     ).fetchone()
-    conn.close()
+    release_conn(conn)
     return {
         "longs_liquidated": longs["count"],
         "longs_value_usd": round(longs["total_usd"], 2),
@@ -973,7 +1013,7 @@ def get_recent_liquidations(limit: int = 50) -> list:
     rows = conn.execute(
         "SELECT * FROM liquidations ORDER BY ts DESC LIMIT ?", (limit,)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1001,7 +1041,7 @@ def get_exchange_summary() -> dict:
     open_positions = conn.execute(
         "SELECT COUNT(*) as c FROM trade_history WHERE status='OPEN'"
     ).fetchone()["c"]
-    conn.close()
+    release_conn(conn)
     return {
         "total_observed_trades": total_observed,
         "observed_trades_24h": observed_24h,
@@ -1023,7 +1063,7 @@ def get_observed_trades(limit: int = 50, symbol: str = None) -> list:
         rows = conn.execute(
             "SELECT * FROM observed_trades ORDER BY ts DESC LIMIT ?", (limit,)
         ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1034,7 +1074,7 @@ def cleanup_old_observed_trades(days: int = 7):
         (f"-{days} days",)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 # ── HyperBulk Helpers ────────────────────────────────────────
@@ -1050,7 +1090,7 @@ def hb_register_user(wallet: str, username: str = None) -> int:
     )
     conn.commit()
     row = conn.execute("SELECT id FROM hb_users WHERE wallet=?", (wallet,)).fetchone()
-    conn.close()
+    release_conn(conn)
     return row["id"]
 
 
@@ -1058,7 +1098,7 @@ def hb_get_user(wallet: str) -> Optional[dict]:
     """Look up a HyperBulk user by wallet address."""
     conn = get_conn()
     row = conn.execute("SELECT * FROM hb_users WHERE wallet=?", (wallet,)).fetchone()
-    conn.close()
+    release_conn(conn)
     return dict(row) if row else None
 
 
@@ -1066,7 +1106,7 @@ def hb_get_user_by_id(user_id: int) -> Optional[dict]:
     """Look up a HyperBulk user by id."""
     conn = get_conn()
     row = conn.execute("SELECT * FROM hb_users WHERE id=?", (user_id,)).fetchone()
-    conn.close()
+    release_conn(conn)
     return dict(row) if row else None
 
 
@@ -1085,7 +1125,7 @@ def hb_log_trade(user_id: int, exchange: str, symbol: str, side: str,
     # Update last_active
     conn.execute("UPDATE hb_users SET last_active=? WHERE id=?", (now, user_id))
     conn.commit()
-    conn.close()
+    release_conn(conn)
     return trade_id
 
 
@@ -1094,7 +1134,7 @@ def hb_close_trade(trade_id: int, exit_price: float) -> dict:
     conn = get_conn()
     row = conn.execute("SELECT * FROM hb_trades WHERE id=?", (trade_id,)).fetchone()
     if not row:
-        conn.close()
+        release_conn(conn)
         return {}
 
     side = row["side"]
@@ -1154,7 +1194,7 @@ def hb_close_trade(trade_id: int, exit_price: float) -> dict:
     )
 
     conn.commit()
-    conn.close()
+    release_conn(conn)
     return {"pnl_usd": round(pnl_usd, 2), "status": status}
 
 
@@ -1203,7 +1243,7 @@ def hb_get_leaderboard(period: str = "daily", limit: int = 50) -> list:
             (limit,)
         ).fetchall()
 
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1251,7 +1291,7 @@ def hb_get_user_stats(user_id: int) -> dict:
         stats["level"] = user["level"]
         stats["league"] = user["league"]
 
-    conn.close()
+    release_conn(conn)
     return stats
 
 
@@ -1265,7 +1305,7 @@ def hb_award_achievement(user_id: int, achievement: str) -> bool:
     )
     conn.commit()
     newly_awarded = cur.rowcount > 0
-    conn.close()
+    release_conn(conn)
     return newly_awarded
 
 
@@ -1276,7 +1316,7 @@ def hb_get_achievements(user_id: int) -> list:
         "SELECT * FROM hb_achievements WHERE user_id=? ORDER BY earned_at DESC",
         (user_id,)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1292,7 +1332,7 @@ def hb_get_open_trades(user_id: int = None) -> list:
         rows = conn.execute(
             "SELECT * FROM hb_trades WHERE status='OPEN' ORDER BY opened_at DESC"
         ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1307,7 +1347,7 @@ def br_create_game(symbol: str, direction: str, entry_fee: float,
     )
     conn.commit()
     gid = cur.lastrowid
-    conn.close()
+    release_conn(conn)
     return gid
 
 
@@ -1322,7 +1362,7 @@ def br_join_game(game_id: int, user_id: int):
         (game_id, game_id)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def br_settle_game(game_id: int, entry_price: float, pot_usd: float,
@@ -1343,7 +1383,7 @@ def br_settle_game(game_id: int, entry_price: float, pot_usd: float,
              game_id, p["user_id"])
         )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def br_get_leaderboard(limit: int = 50) -> list:
@@ -1359,7 +1399,7 @@ def br_get_leaderboard(limit: int = 50) -> list:
            GROUP BY p.user_id ORDER BY total_winnings DESC LIMIT ?""",
         (limit,)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1376,7 +1416,7 @@ def flip_create(user_id: int, symbol: str, exchange: str,
     )
     conn.commit()
     game_id = cur.lastrowid
-    conn.close()
+    release_conn(conn)
     return game_id
 
 
@@ -1389,7 +1429,7 @@ def flip_start(game_id: int, entry_price: float, size: float,
         (entry_price, size, order_id, datetime.utcnow().isoformat(), game_id)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def flip_settle(game_id: int, exit_price: float, won: bool,
@@ -1405,7 +1445,7 @@ def flip_settle(game_id: int, exit_price: float, won: bool,
          "won" if won else "lost", datetime.utcnow().isoformat(), game_id)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def flip_get_streak(user_id: int) -> int:
@@ -1416,7 +1456,7 @@ def flip_get_streak(user_id: int) -> int:
            ORDER BY id DESC LIMIT 20""",
         (user_id,)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     streak = 0
     for r in rows:
         if r["won"]:
@@ -1433,7 +1473,7 @@ def flip_get_history(user_id: int, limit: int = 50) -> list:
            ORDER BY id DESC LIMIT ?""",
         (user_id, limit)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1448,7 +1488,7 @@ def flip_get_stats(user_id: int) -> dict:
            FROM flip_games WHERE user_id=? AND status IN ('won','lost')""",
         (user_id,)
     ).fetchone()
-    conn.close()
+    release_conn(conn)
     d = dict(row) if row else {}
     total = d.get("total", 0) or 0
     wins = d.get("wins", 0) or 0
@@ -1478,7 +1518,7 @@ def flip_get_leaderboard(limit: int = 50) -> list:
            ORDER BY total_pnl DESC LIMIT ?""",
         (limit,)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1496,7 +1536,7 @@ def sniper_save_round(round_id: int, symbol: str, entry_fee: float,
          datetime.utcnow().isoformat(), locks_at, settles_at)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
     return round_id
 
 
@@ -1516,7 +1556,7 @@ def sniper_save_prediction(round_id: int, user_id: int,
     )
     conn.commit()
     row_id = cur.lastrowid or 0
-    conn.close()
+    release_conn(conn)
     return row_id
 
 
@@ -1538,13 +1578,13 @@ def sniper_settle_round(round_id: int, actual_price: float,
              r["accuracy_tier"], r["payout_usd"], round_id, r["user_id"])
         )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 def sniper_get_round(round_id: int) -> Optional[dict]:
     conn = get_conn()
     row = conn.execute("SELECT * FROM sniper_rounds WHERE id=?", (round_id,)).fetchone()
-    conn.close()
+    release_conn(conn)
     return dict(row) if row else None
 
 
@@ -1565,7 +1605,7 @@ def sniper_get_leaderboard(limit: int = 50) -> list:
            LIMIT ?""",
         (limit,)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1582,7 +1622,7 @@ def hb_create_game(user_id: int, symbol: str, exchange: str,
     )
     conn.commit()
     game_id = cur.lastrowid
-    conn.close()
+    release_conn(conn)
     return game_id
 
 
@@ -1595,7 +1635,7 @@ def hb_start_game(game_id: int, entry_price: float, size: float,
         (entry_price, size, order_id, datetime.utcnow().isoformat(), game_id)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
     return True
 
 
@@ -1610,14 +1650,14 @@ def hb_end_game(game_id: int, exit_price: float, multiplier: float,
     )
     conn.commit()
     row = conn.execute("SELECT * FROM hb_games WHERE id=?", (game_id,)).fetchone()
-    conn.close()
+    release_conn(conn)
     return dict(row) if row else {}
 
 
 def hb_get_game(game_id: int) -> Optional[dict]:
     conn = get_conn()
     row = conn.execute("SELECT * FROM hb_games WHERE id=?", (game_id,)).fetchone()
-    conn.close()
+    release_conn(conn)
     return dict(row) if row else None
 
 
@@ -1628,7 +1668,7 @@ def hb_get_active_game(user_id: int) -> Optional[dict]:
         "SELECT * FROM hb_games WHERE user_id=? AND status='live' ORDER BY id DESC LIMIT 1",
         (user_id,)
     ).fetchone()
-    conn.close()
+    release_conn(conn)
     return dict(row) if row else None
 
 
@@ -1639,7 +1679,7 @@ def hb_get_game_history(user_id: int, limit: int = 50) -> list:
            ORDER BY ended_at DESC LIMIT ?""",
         (user_id, limit)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1653,7 +1693,7 @@ def hb_get_game_leaderboard(limit: int = 50) -> list:
            ORDER BY g.multiplier DESC LIMIT ?""",
         (limit,)
     ).fetchall()
-    conn.close()
+    release_conn(conn)
     return [dict(r) for r in rows]
 
 
@@ -1679,7 +1719,7 @@ def save_news_event(source: str, article_id: str, title: str,
         conn.commit()
         row_id = cur.lastrowid or 0
     finally:
-        conn.close()
+        release_conn(conn)
     return row_id
 
 
@@ -1690,7 +1730,7 @@ def is_news_seen(source: str, article_id: str) -> bool:
         "SELECT id FROM news_events WHERE source=? AND article_id=?",
         (source, article_id)
     ).fetchone()
-    conn.close()
+    release_conn(conn)
     return row is not None
 
 
@@ -1702,7 +1742,7 @@ def mark_news_traded(event_id: int, trade_id: int):
         (trade_id, event_id)
     )
     conn.commit()
-    conn.close()
+    release_conn(conn)
 
 
 if __name__ == "__main__":

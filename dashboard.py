@@ -1,5 +1,5 @@
 """
-BulkMind Dashboard — FastAPI + WebSocket real-time dashboard
+BulkMind Dashboard — aiohttp + WebSocket real-time dashboard
 Serves REST API + live WebSocket feed + static frontend
 """
 
@@ -10,7 +10,7 @@ import aiohttp
 from datetime import datetime
 from aiohttp import web
 from db import (
-    get_conn, get_open_trades, get_agent_stats, get_top_traders,
+    get_conn, release_conn, get_open_trades, get_agent_stats, get_top_traders,
     search_wallets, get_wallet_profile, get_leaderboard, get_analytics,
     get_whales, get_liquidation_stats, get_recent_liquidations,
     get_exchange_summary, get_observed_trades,
@@ -27,10 +27,52 @@ from db import (
 )
 from reporter import Reporter
 from config import DASHBOARD_HOST, DASHBOARD_PORT, BREAKOUT_PAPER_MODE, BULK_API_BASE, HL_API_BASE
+from validation import (
+    validate_int, validate_float, validate_wallet, validate_symbol,
+    validate_exchange, validate_side, validate_direction, validate_period,
+    validate_interval, validate_username,
+)
+from collections import defaultdict
 from pathlib import Path
 
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Rate limiting: requests per IP per window
+RATE_LIMIT_WINDOW = 60       # seconds
+RATE_LIMIT_MAX = 120         # max requests per window (2/sec average)
+RATE_LIMIT_POST_MAX = 30     # stricter limit for POST (trade/game actions)
+
+_rate_buckets: dict = defaultdict(list)  # ip → [timestamps]
+
+
+@web.middleware
+async def rate_limit_middleware(request, handler):
+    """Per-IP sliding window rate limiter."""
+    # Skip static files and websocket
+    path = request.path
+    if path.startswith("/static/") or path == "/ws":
+        return await handler(request)
+
+    ip = request.remote or "unknown"
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW
+
+    # Prune old entries
+    bucket = _rate_buckets[ip]
+    _rate_buckets[ip] = bucket = [t for t in bucket if t > cutoff]
+
+    # Choose limit based on method
+    limit = RATE_LIMIT_POST_MAX if request.method == "POST" else RATE_LIMIT_MAX
+
+    if len(bucket) >= limit:
+        return web.json_response(
+            {"error": "Rate limit exceeded. Try again shortly."},
+            status=429,
+        )
+
+    bucket.append(now)
+    return await handler(request)
 
 
 class Dashboard:
@@ -41,7 +83,7 @@ class Dashboard:
         self.bulk_executor = bulk_executor
         self.hl_executor = hl_executor
         self.active_games: dict = {}  # game_id → MoonOrDoomEngine
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[rate_limit_middleware])
         self._setup_routes()
 
     def _setup_routes(self):
@@ -172,7 +214,7 @@ class Dashboard:
         lat = conn.execute(
             "SELECT AVG(latency_ms) as avg_ms FROM latency_log WHERE ts > datetime('now', '-5 minutes') AND latency_ms > 0 AND error IS NULL"
         ).fetchone()
-        conn.close()
+        release_conn(conn)
 
         return web.json_response({
             "status": "online",
@@ -185,12 +227,12 @@ class Dashboard:
         })
 
     async def _api_trades(self, request):
-        limit = int(request.query.get("limit", "50"))
+        limit = validate_int(request.query.get("limit", "50"), default=50, min_val=1, max_val=500)
         conn = get_conn()
         rows = conn.execute(
             "SELECT * FROM trades ORDER BY ts DESC LIMIT ?", (limit,)
         ).fetchall()
-        conn.close()
+        release_conn(conn)
         return web.json_response([dict(r) for r in rows])
 
     async def _api_open_trades(self, request):
@@ -203,13 +245,13 @@ class Dashboard:
         return web.json_response(stats)
 
     async def _api_issues(self, request):
-        hours = int(request.query.get("hours", "24"))
+        hours = validate_int(request.query.get("hours", "24"), default=24, min_val=1, max_val=720)
         conn = get_conn()
         rows = conn.execute(
             "SELECT * FROM issues WHERE ts > datetime('now', ?) ORDER BY ts DESC",
             (f"-{hours} hours",)
         ).fetchall()
-        conn.close()
+        release_conn(conn)
         return web.json_response([dict(r) for r in rows])
 
     async def _api_explorer_search(self, request):
@@ -227,15 +269,15 @@ class Dashboard:
         return web.json_response(profile)
 
     async def _api_traders(self, request):
-        hours = int(request.query.get("hours", "24"))
-        limit = int(request.query.get("limit", "50"))
+        hours = validate_int(request.query.get("hours", "24"), default=24, min_val=1, max_val=720)
+        limit = validate_int(request.query.get("limit", "50"), default=50, min_val=1, max_val=500)
         data = get_top_traders(hours, limit)
         return web.json_response(data)
 
     async def _api_leaderboard(self, request):
         tab = request.query.get("tab", "top_traders")
-        period = request.query.get("period", "24h")
-        limit = int(request.query.get("limit", "100"))
+        period = validate_period(request.query.get("period", "24h"), default="24h")
+        limit = validate_int(request.query.get("limit", "100"), default=100, min_val=1, max_val=500)
         data = get_leaderboard(tab, period, limit)
         return web.json_response(data)
 
@@ -244,7 +286,7 @@ class Dashboard:
         return web.json_response(data)
 
     async def _api_whales(self, request):
-        min_balance = float(request.query.get("min_balance", "50000"))
+        min_balance = validate_float(request.query.get("min_balance", "50000"), default=50000.0, min_val=0.0, max_val=100_000_000.0)
         data = get_whales(min_balance)
         return web.json_response(data)
 
@@ -287,20 +329,22 @@ class Dashboard:
 
     async def _api_liquidations(self, request):
         """Recent liquidation events."""
-        limit = int(request.query.get("limit", "50"))
+        limit = validate_int(request.query.get("limit", "50"), default=50, min_val=1, max_val=500)
         data = get_recent_liquidations(limit)
         return web.json_response(data)
 
     async def _api_liquidation_stats(self, request):
         """Aggregated liquidation stats — longs vs shorts."""
-        hours = int(request.query.get("hours", "24"))
+        hours = validate_int(request.query.get("hours", "24"), default=24, min_val=1, max_val=720)
         data = get_liquidation_stats(hours)
         return web.json_response(data)
 
     async def _api_trades_feed(self, request):
         """Recent observed trades from the WebSocket feed."""
-        limit = int(request.query.get("limit", "50"))
+        limit = validate_int(request.query.get("limit", "50"), default=50, min_val=1, max_val=500)
         symbol = request.query.get("symbol", None)
+        if symbol:
+            symbol = validate_symbol(symbol)
         data = get_observed_trades(limit, symbol)
         return web.json_response(data)
 
@@ -380,7 +424,7 @@ class Dashboard:
         """BulkSOL historical snapshots for chart data."""
         if not self.bulksol:
             return web.json_response({"error": "BulkSOL module not initialized"}, status=503)
-        hours = int(request.query.get("hours", "168"))
+        hours = validate_int(request.query.get("hours", "168"), default=168, min_val=1, max_val=8760)
         data = self.bulksol.get_snapshots(hours)
         return web.json_response({
             "snapshots": data,
@@ -457,10 +501,12 @@ class Dashboard:
         """Register a new HyperBulk user."""
         try:
             body = await request.json()
-            wallet = body.get("wallet")
-            username = body.get("username")
-            if not wallet or not username:
-                return web.json_response({"error": "wallet and username are required"}, status=400)
+            wallet, err = validate_wallet(body.get("wallet"))
+            if err:
+                return web.json_response({"error": err}, status=400)
+            username, err = validate_username(body.get("username"))
+            if err:
+                return web.json_response({"error": err}, status=400)
             user = hb_register_user(wallet, username)
             return web.json_response(user)
         except Exception as e:
@@ -483,18 +529,17 @@ class Dashboard:
         Calls real executors (paper or live) and logs to DB."""
         try:
             body = await request.json()
-            wallet = body.get("wallet")
-            exchange = body.get("exchange", "bulk")
-            symbol = body.get("symbol", "BTC-USD")
-            side = body.get("side", "BUY").upper()
-            size = float(body.get("size", 0))
-
-            if not wallet or size <= 0:
-                return web.json_response({"error": "wallet and positive size are required"}, status=400)
-            if exchange not in ("bulk", "hyperliquid", "both"):
-                return web.json_response({"error": "exchange must be bulk, hyperliquid, or both"}, status=400)
-            if side not in ("BUY", "SELL"):
-                return web.json_response({"error": "side must be BUY or SELL"}, status=400)
+            wallet, err = validate_wallet(body.get("wallet"))
+            if err:
+                return web.json_response({"error": err}, status=400)
+            exchange = validate_exchange(body.get("exchange", "bulk"))
+            symbol = validate_symbol(body.get("symbol", "BTC-USD"))
+            side, err = validate_side(body.get("side", "BUY"))
+            if err:
+                return web.json_response({"error": err}, status=400)
+            size = validate_float(body.get("size", 0), min_val=0.0, max_val=1000.0)
+            if size <= 0:
+                return web.json_response({"error": "positive size is required"}, status=400)
 
             user = hb_get_user(wallet)
             if not user:
@@ -613,7 +658,7 @@ class Dashboard:
                 "SELECT * FROM hb_trades WHERE id=? AND status='OPEN'",
                 (trade_id,)
             ).fetchone()
-            conn.close()
+            release_conn(conn)
 
             if not trade_row:
                 return web.json_response({"error": "Trade not found or already closed"}, status=404)
@@ -661,9 +706,7 @@ class Dashboard:
     async def _hb_leaderboard(self, request):
         """HyperBulk leaderboard by period."""
         try:
-            period = request.query.get("period", "alltime")
-            if period not in ("daily", "weekly", "alltime"):
-                return web.json_response({"error": "period must be daily, weekly, or alltime"}, status=400)
+            period = validate_period(request.query.get("period", "alltime"))
             data = hb_get_leaderboard(period)
             return web.json_response(data)
         except Exception as e:
@@ -759,14 +802,14 @@ class Dashboard:
     async def _hb_signals(self, request):
         """Get current AI signals for a symbol. <20ms response."""
         from signal_engine import signals
-        symbol = request.query.get("symbol", "BTC-USD")
-        limit = int(request.query.get("limit", "5"))
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
+        limit = validate_int(request.query.get("limit", "5"), default=5, min_val=1, max_val=20)
         return web.json_response(signals.get_signals(symbol, limit))
 
     async def _hb_signals_backtest(self, request):
         """Get backtest results per strategy."""
         from signal_engine import signals
-        symbol = request.query.get("symbol", "BTC-USD")
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
         return web.json_response(signals.get_backtest(symbol))
 
     async def _rush_start(self, request):
@@ -774,13 +817,13 @@ class Dashboard:
         try:
             from rush_engine import rush
             body = await request.json()
-            wallet = body.get("wallet")
-            symbol = body.get("symbol", "BTC-USD")
-            bet = float(body.get("bet_amount", 5.0))
-            exchange = body.get("exchange", "bulk")
+            wallet, err = validate_wallet(body.get("wallet"))
+            if err:
+                return web.json_response({"error": err}, status=400)
+            symbol = validate_symbol(body.get("symbol", "BTC-USD"))
+            bet = validate_float(body.get("bet_amount", 5.0), default=5.0, min_val=1.0, max_val=10000.0)
+            exchange = validate_exchange(body.get("exchange", "bulk"))
 
-            if not wallet or bet <= 0:
-                return web.json_response({"error": "wallet and positive bet required"}, status=400)
             user = hb_get_user(wallet)
             if not user:
                 return web.json_response({"error": "User not found"}, status=404)
@@ -895,9 +938,9 @@ class Dashboard:
         try:
             from br_engine import battle_royale, BRConfig
             body = await request.json()
-            symbol = body.get("symbol", "BTC-USD")
-            direction = body.get("direction", "long")
-            entry_fee = float(body.get("entry_fee", 10.0))
+            symbol = validate_symbol(body.get("symbol", "BTC-USD"))
+            direction = validate_direction(body.get("direction", "long"), default="long")
+            entry_fee = validate_float(body.get("entry_fee", 10.0), default=10.0, min_val=1.0, max_val=10000.0)
 
             config = BRConfig(symbol=symbol, direction=direction, entry_fee=entry_fee)
             game = battle_royale.create_game(config)
@@ -913,9 +956,11 @@ class Dashboard:
         """Join a Battle Royale lobby."""
         try:
             from br_engine import battle_royale
-            game_id = int(request.match_info["game_id"])
+            game_id = validate_int(request.match_info["game_id"], default=0, min_val=1, max_val=999999)
             body = await request.json()
-            wallet = body.get("wallet")
+            wallet, err = validate_wallet(body.get("wallet"))
+            if err:
+                return web.json_response({"error": err}, status=400)
 
             user = hb_get_user(wallet)
             if not user:
@@ -1032,16 +1077,15 @@ class Dashboard:
         try:
             from flip_engine import flip
             body = await request.json()
-            wallet = body.get("wallet")
-            symbol = body.get("symbol", "BTC-USD")
-            direction = body.get("direction", "up").lower()
-            bet_amount = float(body.get("bet_amount", 5.0))
-            exchange = body.get("exchange", "bulk")
-
-            if not wallet or bet_amount <= 0:
-                return web.json_response({"error": "wallet and positive bet required"}, status=400)
+            wallet, err = validate_wallet(body.get("wallet"))
+            if err:
+                return web.json_response({"error": err}, status=400)
+            symbol = validate_symbol(body.get("symbol", "BTC-USD"))
+            direction = validate_direction(body.get("direction", "up"), default="up")
             if direction not in ("up", "down"):
                 return web.json_response({"error": "direction must be up or down"}, status=400)
+            bet_amount = validate_float(body.get("bet_amount", 5.0), default=5.0, min_val=1.0, max_val=10000.0)
+            exchange = validate_exchange(body.get("exchange", "bulk"))
 
             user = hb_get_user(wallet)
             if not user:
@@ -1111,7 +1155,7 @@ class Dashboard:
                 from db import get_conn
                 conn = get_conn()
                 row = conn.execute("SELECT * FROM flip_games WHERE id=?", (game_id,)).fetchone()
-                conn.close()
+                release_conn(conn)
                 if row:
                     return web.json_response(dict(row))
                 return web.json_response({"error": "Game not found"}, status=404)
@@ -1182,9 +1226,9 @@ class Dashboard:
         try:
             from sniper_engine import sniper, SniperConfig
             body = await request.json()
-            symbol = body.get("symbol", "BTC-USD")
-            entry_fee = float(body.get("entry_fee", 5.0))
-            duration = int(body.get("duration_sec", 300))
+            symbol = validate_symbol(body.get("symbol", "BTC-USD"))
+            entry_fee = validate_float(body.get("entry_fee", 5.0), default=5.0, min_val=1.0, max_val=10000.0)
+            duration = validate_int(body.get("duration_sec", 300), default=300, min_val=60, max_val=3600)
 
             config = SniperConfig(
                 symbol=symbol, entry_fee=entry_fee,
@@ -1208,13 +1252,14 @@ class Dashboard:
         """Submit a price prediction for a Sniper round."""
         try:
             from sniper_engine import sniper
-            round_id = int(request.match_info["round_id"])
+            round_id = validate_int(request.match_info["round_id"], default=0, min_val=1, max_val=999999)
             body = await request.json()
-            wallet = body.get("wallet")
-            predicted_price = float(body.get("price", 0))
-
-            if not wallet or predicted_price <= 0:
-                return web.json_response({"error": "wallet and positive price required"}, status=400)
+            wallet, err = validate_wallet(body.get("wallet"))
+            if err:
+                return web.json_response({"error": err}, status=400)
+            predicted_price = validate_float(body.get("price", 0), min_val=0.001, max_val=10_000_000.0)
+            if predicted_price <= 0:
+                return web.json_response({"error": "positive price required"}, status=400)
 
             user = hb_get_user(wallet)
             if not user:
@@ -1346,14 +1391,13 @@ class Dashboard:
         try:
             from game_engine import MoonOrDoomEngine, GameConfig
             body = await request.json()
-            wallet = body.get("wallet")
-            symbol = body.get("symbol", "BTC-USD")
-            bet_amount = float(body.get("bet_amount", 10.0))
-            exchange = body.get("exchange", "bulk")
-            auto_cashout = float(body.get("auto_cashout", 0))
-
-            if not wallet or bet_amount <= 0:
-                return web.json_response({"error": "wallet and positive bet required"}, status=400)
+            wallet, err = validate_wallet(body.get("wallet"))
+            if err:
+                return web.json_response({"error": err}, status=400)
+            symbol = validate_symbol(body.get("symbol", "BTC-USD"))
+            bet_amount = validate_float(body.get("bet_amount", 10.0), default=10.0, min_val=1.0, max_val=10000.0)
+            exchange = validate_exchange(body.get("exchange", "bulk"))
+            auto_cashout = validate_float(body.get("auto_cashout", 0), default=0, min_val=0, max_val=100.0)
 
             user = hb_get_user(wallet)
             if not user:
@@ -1464,7 +1508,7 @@ class Dashboard:
                 return web.json_response({"error": "Game not found or not active"}, status=404)
 
             body = await request.json()
-            add_amount = float(body.get("amount", engine.state.config.bet_amount))
+            add_amount = validate_float(body.get("amount", engine.state.config.bet_amount), default=engine.state.config.bet_amount, min_val=1.0, max_val=10000.0)
 
             current_price = await self._get_price(
                 engine.state.config.symbol, engine.state.config.exchange
@@ -1558,65 +1602,64 @@ class Dashboard:
     async def _hb_cvd(self, request):
         """Cumulative Volume Delta time series."""
         from analytics import orderflow
-        symbol = request.query.get("symbol", "BTC-USD")
-        limit = int(request.query.get("limit", "500"))
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
+        limit = validate_int(request.query.get("limit", "500"), default=500, min_val=1, max_val=2000)
         return web.json_response(orderflow.get_cvd(symbol, limit))
 
     async def _hb_volume_delta(self, request):
         """Volume delta per candle (buy/sell volume + delta + counts)."""
         from analytics import orderflow
-        symbol = request.query.get("symbol", "BTC-USD")
-        limit = int(request.query.get("limit", "100"))
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
+        limit = validate_int(request.query.get("limit", "100"), default=100, min_val=1, max_val=1000)
         return web.json_response(orderflow.get_volume_delta(symbol, limit))
 
     async def _hb_large_trades(self, request):
         """Large trades / volume bubbles (>= $5k)."""
         from analytics import orderflow
-        symbol = request.query.get("symbol", "BTC-USD")
-        limit = int(request.query.get("limit", "100"))
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
+        limit = validate_int(request.query.get("limit", "100"), default=100, min_val=1, max_val=1000)
         return web.json_response(orderflow.get_large_trades(symbol, limit))
 
     async def _hb_footprint(self, request):
         """Footprint chart data — volume at each price level per candle."""
         from analytics import orderflow
-        symbol = request.query.get("symbol", "BTC-USD")
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
         candle = request.query.get("candle", None)
-        candle_ts = int(candle) if candle else None
+        candle_ts = validate_int(candle, default=0, min_val=0, max_val=9999999999) if candle else None
         return web.json_response(orderflow.get_footprint(symbol, candle_ts))
 
     async def _hb_heatmap(self, request):
         """Orderbook heatmap — bid/ask depth snapshots over time."""
         from analytics import liquidity
-        symbol = request.query.get("symbol", "BTC-USD")
-        limit = int(request.query.get("limit", "100"))
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
+        limit = validate_int(request.query.get("limit", "100"), default=100, min_val=1, max_val=1000)
         return web.json_response(liquidity.get_heatmap(symbol, limit))
 
     async def _hb_depth(self, request):
         """Orderbook depth chart — cumulative bid/ask levels."""
         from analytics import liquidity
-        symbol = request.query.get("symbol", "BTC-USD")
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
         return web.json_response(liquidity.get_depth(symbol))
 
     async def _hb_oi(self, request):
         """Open Interest time series."""
         from analytics import derivatives
-        symbol = request.query.get("symbol", "BTC-USD")
-        limit = int(request.query.get("limit", "200"))
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
+        limit = validate_int(request.query.get("limit", "200"), default=200, min_val=1, max_val=2000)
         return web.json_response(derivatives.get_oi_series(symbol, limit))
 
     async def _hb_funding(self, request):
         """Funding rate comparison (Bulk vs Hyperliquid) time series."""
         from analytics import derivatives
-        symbol = request.query.get("symbol", "BTC-USD")
-        limit = int(request.query.get("limit", "200"))
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
+        limit = validate_int(request.query.get("limit", "200"), default=200, min_val=1, max_val=2000)
         return web.json_response(derivatives.get_funding_series(symbol, limit))
 
     async def _hb_liq_map(self, request):
         """Liquidation map — actual clusters + estimated levels."""
         from analytics import derivatives
-        symbol = request.query.get("symbol", "BTC-USD")
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
         clusters = derivatives.get_liq_map(symbol)
-        # Also get current price for estimated levels
         price = await self._get_price(symbol, "bulk")
         estimated = derivatives.estimate_liq_levels(symbol, price)
         return web.json_response({
@@ -1628,21 +1671,21 @@ class Dashboard:
     async def _hb_volume_profile(self, request):
         """Volume Profile — volume at price with POC."""
         from analytics import profile
-        symbol = request.query.get("symbol", "BTC-USD")
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
         return web.json_response(profile.get_volume_profile(symbol))
 
     async def _hb_tpo(self, request):
         """TPO (Time Price Opportunity) — market profile letters."""
         from analytics import profile
-        symbol = request.query.get("symbol", "BTC-USD")
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
         return web.json_response(profile.get_tpo(symbol))
 
     async def _hb_candles(self, request):
         """Fetch OHLCV candles from Bulk and/or Hyperliquid for charting."""
-        symbol = request.query.get("symbol", "BTC-USD")
-        exchange = request.query.get("exchange", "bulk")
-        interval = request.query.get("interval", "15m")
-        limit = int(request.query.get("limit", "100"))
+        symbol = validate_symbol(request.query.get("symbol", "BTC-USD"))
+        exchange = validate_exchange(request.query.get("exchange", "bulk"))
+        interval = validate_interval(request.query.get("interval", "15m"))
+        limit = validate_int(request.query.get("limit", "100"), default=100, min_val=1, max_val=1000)
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -1718,7 +1761,7 @@ class Dashboard:
                ORDER BY closed_at ASC""",
             (user["id"],)
         ).fetchall()
-        conn.close()
+        release_conn(conn)
 
         # Build cumulative PnL series
         cumulative = 0.0
@@ -1750,7 +1793,7 @@ class Dashboard:
         })
 
     async def _api_latency(self, request):
-        minutes = int(request.query.get("minutes", "60"))
+        minutes = validate_int(request.query.get("minutes", "60"), default=60, min_val=1, max_val=1440)
         conn = get_conn()
         rows = conn.execute(
             """SELECT endpoint,
@@ -1763,7 +1806,7 @@ class Dashboard:
                GROUP BY endpoint""",
             (f"-{minutes} minutes",)
         ).fetchall()
-        conn.close()
+        release_conn(conn)
         return web.json_response([dict(r) for r in rows])
 
     # ── Run ────────────────────────────────────────────────────

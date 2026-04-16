@@ -8,7 +8,7 @@ import json
 import math
 from datetime import datetime, timedelta
 from collections import defaultdict
-from db import get_conn
+from db import get_conn, release_conn
 from config import BULK_API_BASE, HL_API_BASE, HL_SYMBOL_MAP
 
 

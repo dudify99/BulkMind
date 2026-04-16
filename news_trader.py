@@ -16,7 +16,7 @@ import aiohttp
 from ta import atr, compute_sl_tp, position_size
 from db import (
     log_trade, close_trade, get_open_trades, get_agent_stats, log_issue,
-    save_news_event, is_news_seen, mark_news_traded, get_conn,
+    save_news_event, is_news_seen, mark_news_traded, get_conn, release_conn,
 )
 from reporter import Reporter
 from config import (
@@ -744,7 +744,7 @@ class NewsTrader:
                         "SELECT id FROM news_events WHERE source=? AND article_id=?",
                         (article["source"], article["id"])
                     ).fetchone()
-                    conn.close()
+                    release_conn(conn)
                     event_id = row["id"] if row else 0
 
                     # Trade on all venues in parallel

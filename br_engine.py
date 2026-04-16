@@ -6,6 +6,7 @@ All positions real on-chain via Bulk/Hyperliquid.
 
 import time
 import math
+import random
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List
@@ -61,6 +62,8 @@ class BRPlayer:
     payout_usd: float = 0.0
     survival_sec: float = 0.0
     order_id: str = ""
+    # Per-player SL offset (0.0 to 0.1%) to prevent simultaneous elimination
+    sl_offset_pct: float = 0.0
 
 
 @dataclass
@@ -155,6 +158,8 @@ class BattleRoyaleEngine:
         for p in game.players:
             p.entry_price = entry_price
             p.status = "alive"
+            # Random SL offset (0.00% to 0.10%) so players eliminate one at a time
+            p.sl_offset_pct = random.uniform(0.0, 0.10)
 
     def tick(self, game_id: int, current_price: float) -> Optional[BRGame]:
         """Process a price tick. Checks eliminations and SL shrinking."""
@@ -180,14 +185,21 @@ class BattleRoyaleEngine:
             else:
                 game.current_sl_price = game.entry_price * (1 + game.current_sl_pct / 100)
 
-        # Check eliminations
+        # Check eliminations — each player has a unique SL (base + offset)
+        # to prevent all players being eliminated on the same tick.
         alive = [p for p in game.players if p.status == "alive"]
+        # Sort by tightest SL first so eliminations happen in order
+        alive.sort(key=lambda p: p.sl_offset_pct)
         for player in alive:
-            eliminated = False
+            # Player's individual SL = base SL adjusted by their offset
+            player_sl_pct = game.current_sl_pct - player.sl_offset_pct
+            player_sl_pct = max(game.config.min_sl_pct * 0.5, player_sl_pct)
             if game.config.direction == "long":
-                eliminated = current_price <= game.current_sl_price
+                player_sl_price = game.entry_price * (1 - player_sl_pct / 100)
+                eliminated = current_price <= player_sl_price
             else:
-                eliminated = current_price >= game.current_sl_price
+                player_sl_price = game.entry_price * (1 + player_sl_pct / 100)
+                eliminated = current_price >= player_sl_price
 
             if eliminated:
                 player.status = "eliminated"

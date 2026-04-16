@@ -92,8 +92,10 @@ class SniperEngine:
         round_id = self._next_round_id
         self._next_round_id += 1
 
-        # Predictions accepted for first 80% of duration, then locked
-        lock_time = now + (config.duration_sec * 0.8)
+        # Predictions accepted for first 50% of duration, then locked.
+        # This prevents late-submission exploit where players observe
+        # price trend before predicting (80% was too late).
+        lock_time = now + (config.duration_sec * 0.5)
         settle_time = now + config.duration_sec
 
         rnd = SniperRound(

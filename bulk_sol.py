@@ -20,7 +20,7 @@ import asyncio
 import aiohttp
 import json
 from datetime import datetime
-from db import get_conn, log_issue
+from db import get_conn, release_conn, log_issue
 from config import (
     BULK_API_BASE, BULKSOL_LIVE_CHECK_SEC,
     BULKSOL_SNAPSHOT_SEC, BULKSOL_SUPPLY_ALERT_PCT
@@ -343,7 +343,7 @@ class BulkSOL:
             round(total_sol, 2), round(validator_earnings_24h, 2)
         ))
         conn.commit()
-        conn.close()
+        release_conn(conn)
 
     def get_snapshots(self, hours: int = 168) -> list:
         """Get historical snapshots for charts."""
@@ -363,7 +363,7 @@ class BulkSOL:
             WHERE ts > datetime('now', ?)
             ORDER BY ts ASC
         """, (f"-{hours} hours",)).fetchall()
-        conn.close()
+        release_conn(conn)
         return [dict(r) for r in rows]
 
     # ── Full Dashboard Data ───────────────────────────────────

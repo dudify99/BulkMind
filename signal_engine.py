@@ -88,6 +88,11 @@ class SignalEngine:
         close = candles[-1]["close"]
         atr_val = self._safe_atr(candles)
 
+        # Skip signal generation if ATR is still 0 (no usable data)
+        if atr_val <= 0:
+            self._signals[symbol] = []
+            return
+
         # 1. Breakout
         sig = self._check_breakout(symbol, candles, close, atr_val)
         if sig:
@@ -372,8 +377,24 @@ class SignalEngine:
     # ── Helpers ───────────────────────────────────────────────
 
     def _safe_atr(self, candles: list) -> float:
+        """Return ATR, falling back to recent price range if insufficient data."""
         atr_vals = atr(candles, period=14)
-        return atr_vals[-1] if atr_vals else 0
+        val = atr_vals[-1] if atr_vals else 0
+        if val > 0:
+            return val
+        # Fallback: use high-low range of last 5 candles as ATR estimate
+        if len(candles) >= 2:
+            recent = candles[-min(5, len(candles)):]
+            highs = [c.get("h", c.get("high", 0)) for c in recent]
+            lows = [c.get("l", c.get("low", 0)) for c in recent]
+            if highs and lows and max(highs) > 0:
+                return (max(highs) - min(lows)) / len(recent)
+        # Last resort: 0.5% of close price
+        if candles:
+            close = candles[-1].get("c", candles[-1].get("close", 0))
+            if close > 0:
+                return close * 0.005
+        return 0
 
     def _signal_to_dict(self, sig: Signal) -> dict:
         meta = STRATEGIES.get(sig.strategy, {})

@@ -24,14 +24,20 @@ class FlipDirection(Enum):
     DOWN = "down"
 
 
-# Streak bonus multipliers
+# Streak bonus multipliers — capped at 2.5x to maintain house edge.
+# At 50/50 odds: 1.8x = 10% edge, 2.0x = 0% edge, >2.0x = player edge.
+# We cap at 2.5x as a rare reward (must maintain streak to earn it).
 STREAK_MULTIPLIERS = {
     0: 1.8,   # Base payout: 1.8x (house edge ~10%)
-    3: 2.0,   # 3-streak: 2x
-    5: 2.5,   # 5-streak: 2.5x
-    7: 3.0,   # 7-streak: 3x
-    10: 5.0,  # 10-streak: 5x (legendary)
+    3: 1.9,   # 3-streak: 1.9x
+    5: 2.0,   # 5-streak: 2.0x (fair)
+    7: 2.2,   # 7-streak: 2.2x (slight player edge, very rare)
+    10: 2.5,  # 10-streak: 2.5x (legendary, capped here)
 }
+
+# Anti-exploit: max bet increase ratio between consecutive games.
+# Prevents building streaks with $1 then betting $1000 at high multiplier.
+MAX_BET_INCREASE_RATIO = 3.0  # Can't bet more than 3x previous game's bet
 
 
 def get_payout_multiplier(streak: int) -> float:
@@ -85,11 +91,23 @@ class FlipEngine:
     def __init__(self):
         self.active_games: Dict[int, FlipGame] = {}
         self._next_id = 1
+        # Track last bet per user for anti-exploit
+        self._last_bet: Dict[int, float] = {}
 
     def create_game(self, user_id: int, symbol: str, exchange: str,
                     direction: str, bet_amount: float,
                     streak: int = 0, duration_sec: int = 60) -> FlipGame:
-        """Create a new Flip It game."""
+        """Create a new Flip It game.
+        Anti-exploit: if streak > 0 and bet increased more than 3x from
+        last game, reset streak to 0 (prevents small-bet streak farming).
+        """
+        # Anti-exploit: check bet size jump
+        last_bet = self._last_bet.get(user_id, 0)
+        if streak > 0 and last_bet > 0 and bet_amount > last_bet * MAX_BET_INCREASE_RATIO:
+            streak = 0  # Reset streak — suspicious bet size jump
+
+        self._last_bet[user_id] = bet_amount
+
         game_id = self._next_id
         self._next_id += 1
 

@@ -8,7 +8,7 @@ import aiohttp
 import time
 import statistics
 from datetime import datetime
-from db import log_latency, log_issue, get_conn, cleanup_old_observed_trades
+from db import log_latency, log_issue, get_conn, release_conn, cleanup_old_observed_trades
 from config import (
     BULK_API_BASE, WATCH_PING_INTERVAL_SEC, WATCH_LATENCY_THRESHOLD_MS,
     WATCH_DOWNTIME_ALERT_SEC, WATCH_LOG_DIR, WATCH_REPORT_INTERVAL_MIN
@@ -104,7 +104,7 @@ class BulkWatch:
                      datetime.utcnow().isoformat(), duration)
                 )
                 conn.commit()
-                conn.close()
+                release_conn(conn)
                 await self.reporter.alert(
                     f"🟢 BULK BACK ONLINE\nDowntime: `{duration:.0f}s`"
                 )
@@ -131,7 +131,7 @@ class BulkWatch:
                               f"Anomalous funding rate on {symbol}: {rate:.4%}",
                               f"Rate: {rate}")
             conn.commit()
-            conn.close()
+            release_conn(conn)
 
     # ── Orderbook Health ──────────────────────────────────────
 
@@ -183,7 +183,7 @@ class BulkWatch:
                WHERE ts > datetime('now', '-1 hour')
                AND latency_ms > 0 AND error IS NULL"""
         ).fetchall()
-        conn.close()
+        release_conn(conn)
 
         vals = [r["latency_ms"] for r in rows]
         if not vals:
@@ -215,7 +215,7 @@ class BulkWatch:
                WHERE ts > datetime('now', '-1 hours') AND resolved=0
                ORDER BY severity, ts DESC"""
         ).fetchall()
-        conn.close()
+        release_conn(conn)
         issues = [dict(r) for r in issues]
 
         critical = [i for i in issues if i["severity"] == "CRITICAL"]
