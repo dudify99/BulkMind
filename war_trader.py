@@ -234,7 +234,6 @@ class WarTrader:
             if v.name == name:
                 return v
         return None
-
     async def manage_open_trades(self):
         """Close positions on SL/TP hit or time-based exit after WAR_MAX_HOLD_MIN."""
         if not self.open_trades:
@@ -276,7 +275,6 @@ class WarTrader:
                     f"Trade ID: `{trade_id}`")
 
     # ── Performance Report ────────────────────────────────────
-
     async def report_performance(self):
         for venue in self.venues:
             agent_tag = f"{AGENT_NAME}:{venue.name}"
@@ -292,7 +290,6 @@ class WarTrader:
                 f"PnL: `${pnl:.2f}` | Avg: `{stats.get('avg_pnl_pct', 0):.2f}%`")
 
     # ── EvoSkill: Export failure trajectories ─────────────────
-
     def export_failure_trajectories(self, output_path: str = "data/war_failures.json"):
         """Export losing trades as EvoSkill failure trajectories."""
         from db import get_conn
@@ -321,7 +318,6 @@ class WarTrader:
         return output_path
 
     # ── Helper ────────────────────────────────────────────────
-
     async def _signal_and_execute(self, classification: dict,
                                   venue: ExchangeVenue, event_id: int):
         signal = await self.get_signal(classification, venue)
@@ -329,7 +325,6 @@ class WarTrader:
             await self.execute_signal(signal, venue, event_id)
 
     # ── Main Loop ─────────────────────────────────────────────
-
     async def run(self):
         venue_names = [v.name for v in self.venues]
         print(f"⚔️ {AGENT_NAME} started — Exchanges: {venue_names}, Paper: {WAR_PAPER_MODE}")
