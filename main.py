@@ -19,6 +19,7 @@ from funding_arb import FundingArb
 from hl_copier import HLCopier
 from macro_trader import MacroTrader
 from war_trader import WarTrader
+from smc_bot import SMCBot
 from hyperliquid import HyperliquidClient, HyperliquidExecutor
 from hl_stream import HLStream
 from dashboard import Dashboard
@@ -28,6 +29,7 @@ from config import (
     HL_PAPER_MODE, DASHBOARD_PORT,
     FUNDING_PAPER_MODE, COPIER_PAPER_MODE,
     MACRO_PAPER_MODE, WAR_PAPER_MODE,
+    SMC_PAPER_MODE,
 )
 
 
@@ -40,6 +42,7 @@ async def main():
     print(f"  HLCopier:     {'PAPER' if COPIER_PAPER_MODE else '🔴 LIVE'}")
     print(f"  MacroTrader:  {'PAPER' if MACRO_PAPER_MODE else '🔴 LIVE'}")
     print(f"  WarTrader:    {'PAPER' if WAR_PAPER_MODE else '🔴 LIVE'}")
+    print(f"  SMCBot:       {'PAPER' if SMC_PAPER_MODE else '🔴 LIVE'}")
     print(f"  Dashboard: http://localhost:{DASHBOARD_PORT}")
     print("=" * 50)
 
@@ -122,6 +125,10 @@ async def main():
         # ── WarTrader (geopolitical event classifier) ─────────
         war_trader = WarTrader(macro_venues, reporter, session)
 
+        # ── SMCBot (Smart Money Concepts) ─────────────────────
+        smc_executor = BulkExecutor(client, paper=SMC_PAPER_MODE)
+        smc_bot      = SMCBot(smc_executor, client, reporter)
+
         venue_str = ", ".join(v.name for v in news_venues)
         await reporter.send(
             "🟢 *BulkMind Online*\n"
@@ -135,6 +142,7 @@ async def main():
             f"HLCopier: ✅\n"
             f"MacroTrader: ✅\n"
             f"WarTrader: ✅\n"
+            f"SMCBot: ✅\n"
             f"Dashboard: ✅\n"
             f"Mode: `{'PAPER' if BREAKOUT_PAPER_MODE else 'LIVE'}`"
         )
@@ -153,6 +161,7 @@ async def main():
             hl_copier.run(),            # HLCopier: whale copy trading
             macro_trader.run(),         # MacroTrader: economic calendar
             war_trader.run(),           # WarTrader: geopolitical events
+            smc_bot.run(),              # SMCBot: Smart Money Concepts
             hb_pnl_loop(reporter, dashboard),
             hb_analytics_loop(client, hl_client),
             evoskill_schedule(),

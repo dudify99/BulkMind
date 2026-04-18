@@ -128,6 +128,16 @@ HL_ASSET_IDS = {
     "SOL": 5,
 }
 
+# ── SMCBot Settings ──────────────────────────────────────────
+SMC_SYMBOLS          = ["BTC-USD", "ETH-USD", "SOL-USD"]
+SMC_TIMEFRAME_MIN    = 15          # 15-min candles (same as BreakoutBot)
+SMC_LOOKBACK         = 30          # bars for swing/structure detection
+SMC_ATR_MULT         = 1.5         # wider SL — SMC entries need breathing room
+SMC_TP_RATIO         = 2.5         # 1:2.5 R:R — SMC moves tend to be cleaner
+SMC_MAX_POSITION_USD = 100         # max position size (paper mode)
+SMC_PAPER_MODE       = True        # paper trading default
+SMC_MIN_CONFLUENCE   = 3           # require >= 3 of 5 SMC signals aligned
+
 # ── FundingArb Settings ───────────────────────────────────────
 FUNDING_SYMBOLS         = ["BTC-USD", "ETH-USD", "SOL-USD"]
 FUNDING_CHECK_SEC       = 300          # check funding every 5 min

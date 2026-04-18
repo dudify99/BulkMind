@@ -118,6 +118,70 @@ Respond with: YES or NO, followed by one line of reasoning.
 
 # ── EvoSkill Runner ───────────────────────────────────────────
 
+def smc_scorer(question: str, predicted: str, ground_truth: str) -> float:
+    """Score SMCBot trade decision against actual outcome."""
+    pred = predicted.strip().upper()
+    gt   = ground_truth.strip().upper()
+    return 1.0 if pred == gt else 0.0
+
+
+SMC_SYSTEM_PROMPT = """
+You are SMCBot, a Smart Money Concepts trading agent for Bulk perpetuals exchange.
+
+Your job: Given an SMC confluence setup (CHoCH, BOS, Liquidity Sweep, Order Block, FVG),
+decide YES (enter the trade) or NO (skip it).
+
+Analyze:
+1. CHoCH — is the character change genuine or a minor fluctuation?
+2. BOS — does the structure break confirm the new direction?
+3. Liquidity Sweep — was there a clear stop hunt before the reversal?
+4. Order Block — is price returning to a high-quality institutional zone?
+5. FVG — is there a fresh imbalance that price is likely to fill?
+6. Confluence — how many signals align? Fewer than 3 aligned = skip.
+
+Respond with: YES or NO, followed by one line of reasoning.
+"""
+
+INITIAL_SMC_SKILLS = {
+    "choch_quality": """
+# CHoCH Quality Skill
+When evaluating a Change of Character signal:
+- Strong CHoCH: clear swing structure broken with momentum candle, high volume
+- Weak CHoCH: minor price wobble near previous swing, low volume, no follow-through
+- Only trade CHoCH that breaks a swing point from at least 10 bars back
+- Prefer CHoCH after extended trends — reversals are more powerful after exhaustion
+""",
+
+    "ob_proximity": """
+# Order Block Proximity Skill
+When evaluating an Order Block entry:
+- Only trade OBs that price has NOT already revisited since formation
+- The OB should be within 1x ATR of current price for valid entry
+- Stronger OBs: formed with high-volume impulse candles (strength > 2.5x avg body)
+- Avoid OBs that have been touched more than once — they lose institutional significance
+""",
+
+    "sweep_confirmation": """
+# Liquidity Sweep Confirmation Skill
+When evaluating a Liquidity Sweep:
+- Valid sweep: wick pierces the swing level by at least 0.1% then closes back inside
+- The sweep must precede the CHoCH direction — sweeps buy-side liquidity → bearish, sell-side → bullish
+- Avoid entering if the sweep candle body is large (indicates trend continuation, not reversal)
+- Best sweeps: sharp wick rejection on the 15m chart with immediate reclaim
+""",
+}
+
+
+def write_smc_skills(skills_dir: str = ".claude/skills"):
+    """Write initial SMCBot skill files for EvoSkill to iterate on."""
+    Path(skills_dir).mkdir(parents=True, exist_ok=True)
+    for name, content in INITIAL_SMC_SKILLS.items():
+        path = Path(skills_dir) / f"smc_{name}.md"
+        if not path.exists():
+            path.write_text(content)
+            print(f"📝 Wrote SMC skill: smc_{name}.md")
+
+
 def news_trader_scorer(question: str, predicted: str, ground_truth: str) -> float:
     """Score NewsTrader trade decision against actual outcome."""
     pred = predicted.strip().upper()
@@ -202,6 +266,7 @@ async def run_evoskill_loop(failures_path: str = "data/failures.json"):
     # Write initial skills if not present
     write_initial_skills()
     write_news_trader_skills()
+    write_smc_skills()
     write_all_agent_skills()
 
     try:
