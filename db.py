@@ -532,6 +532,23 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_br_games_status ON br_games(status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_br_players_game ON br_players(game_id)")
 
+    # ── Agent Heartbeats ─────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS agent_heartbeats (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts           TEXT NOT NULL DEFAULT (datetime('now')),
+            agent        TEXT NOT NULL,
+            status       TEXT NOT NULL,
+            scan_count   INTEGER DEFAULT 0,
+            signal_count INTEGER DEFAULT 0,
+            trade_count  INTEGER DEFAULT 0,
+            error_count  INTEGER DEFAULT 0,
+            last_error   TEXT,
+            restart_count INTEGER DEFAULT 0
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_agent_heartbeats_agent ON agent_heartbeats(agent, ts)")
+
     # ── Indexes ──────────────────────────────────────────────
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_ts ON observed_trades(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observed_trades_maker ON observed_trades(maker)")

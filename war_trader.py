@@ -10,6 +10,7 @@ from typing import Optional, List, Dict
 from datetime import datetime, timedelta
 from news_trader import ExchangeVenue
 from reporter import Reporter
+from agent_monitor import monitor
 from ta import atr, compute_sl_tp, position_size
 from db import (
     log_trade, close_trade, get_open_trades, get_agent_stats, log_issue,
@@ -331,6 +332,7 @@ class WarTrader:
         scan_count = 0
         while True:
             try:
+                monitor.heartbeat(AGENT_NAME)
                 print(f"\n🔍 [{AGENT_NAME}] Scanning geopolitical feeds...")
                 articles = await self.fetch_geopolitical_news()
                 print(f"  [{AGENT_NAME}] {len(articles)} new geopolitical article(s)")

@@ -20,6 +20,7 @@ from db import (
     get_open_trades, get_agent_stats, log_issue,
 )
 from reporter import Reporter
+from agent_monitor import monitor
 from config import (
     SMC_SYMBOLS, SMC_TIMEFRAME_MIN, SMC_LOOKBACK,
     SMC_ATR_MULT, SMC_TP_RATIO,
@@ -318,6 +319,7 @@ class SMCBot:
 
         while True:
             try:
+                monitor.heartbeat(AGENT_NAME)
                 print(f"\n🔍 [{AGENT_NAME}] Scanning {len(SMC_SYMBOLS)} symbols...")
 
                 for symbol in SMC_SYMBOLS:

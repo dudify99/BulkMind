@@ -89,6 +89,7 @@ class Dashboard:
     def _setup_routes(self):
         self.app.router.add_get("/", self._serve_index)
         self.app.router.add_get("/api/status", self._api_status)
+        self.app.router.add_get("/api/agents", self._api_agents)
         self.app.router.add_get("/api/trades", self._api_trades)
         self.app.router.add_get("/api/trades/open", self._api_open_trades)
         self.app.router.add_get("/api/stats", self._api_stats)
@@ -226,6 +227,10 @@ class Dashboard:
             "avg_latency_ms": round(lat["avg_ms"], 2) if lat["avg_ms"] else None,
             "ts": datetime.utcnow().isoformat(),
         })
+
+    async def _api_agents(self, request):
+        from agent_monitor import monitor
+        return web.json_response(monitor.get_all())
 
     async def _api_trades(self, request):
         limit = validate_int(request.query.get("limit", "50"), default=50, min_val=1, max_val=500)
@@ -1849,11 +1854,15 @@ class Dashboard:
     # ── Run ────────────────────────────────────────────────────
 
     async def run(self):
+        from agent_monitor import monitor
+        monitor.inject_broadcast(self.reporter._ws_broadcast)
+
         runner = web.AppRunner(self.app)
         await runner.setup()
         site = web.TCPSite(runner, DASHBOARD_HOST, DASHBOARD_PORT)
         await site.start()
         print(f"🌐 Dashboard running at http://{DASHBOARD_HOST}:{DASHBOARD_PORT}")
-        # Keep running forever
+        # Push agent status to WebSocket clients every 10s
         while True:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(10)
+            await monitor.push_update()

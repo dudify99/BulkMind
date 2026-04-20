@@ -19,6 +19,7 @@ from db import (
     save_news_event, is_news_seen, mark_news_traded, get_conn, release_conn,
 )
 from reporter import Reporter
+from agent_monitor import monitor
 from config import (
     NEWS_EXCHANGES, NEWS_SYMBOLS, NEWS_POLL_INTERVAL_SEC,
     NEWS_MIN_IMPACT_SCORE, NEWS_ATR_MULT, NEWS_TP_RATIO,
@@ -705,6 +706,7 @@ class NewsTrader:
 
         while True:
             try:
+                monitor.heartbeat(AGENT_NAME)
                 print(f"\n🔍 [{AGENT_NAME}] Fetching news...")
 
                 articles = await self.fetch_news()

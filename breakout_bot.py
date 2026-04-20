@@ -20,6 +20,7 @@ from db import (
     get_candles, get_open_trades, get_agent_stats, log_issue
 )
 from reporter import Reporter
+from agent_monitor import monitor
 from config import (
     BREAKOUT_SYMBOLS, BREAKOUT_TIMEFRAME_MIN,
     BREAKOUT_LOOKBACK, BREAKOUT_VOLUME_MULT,
@@ -299,6 +300,7 @@ class BreakoutBot:
 
         while True:
             try:
+                monitor.heartbeat(AGENT_NAME)
                 print(f"\n🔍 [{AGENT_NAME}] Scanning {len(BREAKOUT_SYMBOLS)} symbols...")
 
                 for symbol in BREAKOUT_SYMBOLS:

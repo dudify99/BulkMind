@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime
 
 from reporter import Reporter
+from agent_monitor import monitor
 from news_trader import ExchangeVenue
 from ta import atr, compute_sl_tp, position_size
 from db import (
@@ -345,6 +346,7 @@ class MacroTrader:
 
         while True:
             try:
+                monitor.heartbeat(AGENT_NAME)
                 events = await self.fetch_upcoming_events()
 
                 for event in events:

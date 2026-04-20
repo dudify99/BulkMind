@@ -14,6 +14,7 @@ from config import (
     WATCH_DOWNTIME_ALERT_SEC, WATCH_LOG_DIR, WATCH_REPORT_INTERVAL_MIN
 )
 from reporter import Reporter
+from agent_monitor import monitor as agent_monitor
 from pathlib import Path
 
 
@@ -248,6 +249,7 @@ class BulkWatch:
         async with aiohttp.ClientSession() as session:
             while True:
                 try:
+                    agent_monitor.heartbeat("BulkWatch")
                     await self.heartbeat(session)
                     await self.check_funding_rates(session)
 

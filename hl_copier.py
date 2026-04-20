@@ -23,6 +23,7 @@ from db import (
     save_copier_position, close_copier_position, get_open_copier_positions,
 )
 from reporter import Reporter
+from agent_monitor import monitor
 from executor import BulkExecutor
 from hyperliquid import HyperliquidClient
 from ta import atr, compute_sl_tp, position_size
@@ -279,6 +280,7 @@ class HLCopier:
         scan_count = 0
         while True:
             try:
+                monitor.heartbeat(AGENT_NAME)
                 for wallet in COPIER_WALLETS:
                     positions = await self.poll_whale(wallet)
                     if positions is not None:

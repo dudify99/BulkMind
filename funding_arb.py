@@ -21,6 +21,7 @@ import aiohttp
 from executor import BulkClient, BulkExecutor
 from hyperliquid import HyperliquidClient, HyperliquidExecutor
 from reporter import Reporter
+from agent_monitor import monitor
 from ta import atr, compute_sl_tp, position_size
 from db import (
     log_trade, close_trade, get_open_trades, get_agent_stats, log_issue,
@@ -433,6 +434,7 @@ class FundingArb:
 
         while True:
             try:
+                monitor.heartbeat(AGENT_NAME)
                 print(f"\n[{AGENT_NAME}] Checking funding rates across "
                       f"{len(FUNDING_SYMBOLS)} symbols...")
 

@@ -24,6 +24,7 @@ from hyperliquid import HyperliquidClient, HyperliquidExecutor
 from hl_stream import HLStream
 from dashboard import Dashboard
 from evoskill_integration import run_evoskill_loop
+from agent_monitor import supervise
 from config import (
     BREAKOUT_PAPER_MODE, NEWS_PAPER_MODE, NEWS_EXCHANGES,
     HL_PAPER_MODE, DASHBOARD_PORT,
@@ -147,21 +148,21 @@ async def main():
             f"Mode: `{'PAPER' if BREAKOUT_PAPER_MODE else 'LIVE'}`"
         )
 
-        # Run all loops concurrently
+        # Run all loops concurrently — each agent wrapped in supervisor for auto-restart
         await asyncio.gather(
-            dashboard.run(),            # Web dashboard + API
-            watch.run(),                # BulkWatch: exchange health
-            stream.run(),               # BulkStream: Bulk live trade feed
-            hl_stream.run(),            # HLStream: Hyperliquid live trade feed
-            profile.run(),              # BulkProfile: wallet discovery
-            bulksol.run(),              # BulkSOL: staking analytics
-            bot.run(),                  # BreakoutBot: TA trading agent
-            news_trader.run(),          # NewsTrader: LLM news agent
-            funding_arb.run(),          # FundingArb: funding rate arb
-            hl_copier.run(),            # HLCopier: whale copy trading
-            macro_trader.run(),         # MacroTrader: economic calendar
-            war_trader.run(),           # WarTrader: geopolitical events
-            smc_bot.run(),              # SMCBot: Smart Money Concepts
+            dashboard.run(),                              # Web dashboard + API (no supervisor — crash = site down)
+            supervise("BulkWatch",    watch.run),
+            supervise("BulkStream",   stream.run),
+            supervise("HLStream",     hl_stream.run),
+            supervise("BulkProfile",  profile.run),
+            supervise("BulkSOL",      bulksol.run),
+            supervise("BreakoutBot",  bot.run),
+            supervise("NewsTrader",   news_trader.run),
+            supervise("FundingArb",   funding_arb.run),
+            supervise("HLCopier",     hl_copier.run),
+            supervise("MacroTrader",  macro_trader.run),
+            supervise("WarTrader",    war_trader.run),
+            supervise("SMCBot",       smc_bot.run),
             hb_pnl_loop(reporter, dashboard),
             hb_analytics_loop(client, hl_client),
             evoskill_schedule(),
