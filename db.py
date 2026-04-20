@@ -532,6 +532,36 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_br_games_status ON br_games(status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_br_players_game ON br_players(game_id)")
 
+    # ── Market Dice Games ─────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS dice_games (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id          INTEGER NOT NULL,
+            symbol           TEXT NOT NULL,
+            exchange         TEXT NOT NULL DEFAULT 'bulk',
+            game_type        TEXT NOT NULL DEFAULT 'pick',
+            num_dice         INTEGER NOT NULL DEFAULT 1,
+            bet_amount       REAL NOT NULL,
+            player_pick      INTEGER NOT NULL,
+            commitment_hash  TEXT NOT NULL,
+            entry_price      TEXT,
+            settlement_price TEXT,
+            raw_digits       INTEGER,
+            dice_result      INTEGER,
+            won              INTEGER DEFAULT 0,
+            payout_mult      REAL DEFAULT 0,
+            payout_usd       REAL DEFAULT 0,
+            pnl_usd          REAL DEFAULT 0,
+            window_sec       INTEGER NOT NULL DEFAULT 5,
+            status           TEXT DEFAULT 'pending',
+            created_at       TEXT NOT NULL,
+            started_at       TEXT,
+            settled_at       TEXT
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dice_user ON dice_games(user_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_dice_status ON dice_games(status)")
+
     # ── Agent Heartbeats ─────────────────────────────────────
     c.execute("""
         CREATE TABLE IF NOT EXISTS agent_heartbeats (
@@ -1818,6 +1848,87 @@ def mark_news_traded(event_id: int, trade_id: int):
     )
     conn.commit()
     release_conn(conn)
+
+
+# ── Market Dice Helpers ──────────────────────────────────────
+
+def save_dice_game(user_id: int, symbol: str, exchange: str, game_type: str,
+                   bet_amount: float, player_pick: int, commitment_hash: str,
+                   window_sec: int = 5) -> int:
+    conn = get_conn()
+    c = conn.execute(
+        """INSERT INTO dice_games
+           (user_id, symbol, exchange, game_type, bet_amount, player_pick,
+            commitment_hash, window_sec, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'))""",
+        (user_id, symbol, exchange, game_type, bet_amount, player_pick,
+         commitment_hash, window_sec),
+    )
+    conn.commit()
+    row_id = c.lastrowid
+    release_conn(conn)
+    return row_id
+
+
+def settle_dice_game(game_id: int, entry_price: str, settlement_price: str,
+                     raw_digits: int, dice_result: int, won: bool,
+                     payout_mult: float, payout_usd: float, pnl_usd: float):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE dice_games SET
+           entry_price=?, settlement_price=?, raw_digits=?, dice_result=?,
+           won=?, payout_mult=?, payout_usd=?, pnl_usd=?, status=?,
+           settled_at=datetime('now')
+           WHERE id=?""",
+        (entry_price, settlement_price, raw_digits, dice_result,
+         1 if won else 0, payout_mult, payout_usd, pnl_usd,
+         "won" if won else "lost", game_id),
+    )
+    conn.commit()
+    release_conn(conn)
+
+
+def get_dice_history(user_id: int, limit: int = 50) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT * FROM dice_games WHERE user_id=?
+           ORDER BY created_at DESC LIMIT ?""",
+        (user_id, limit),
+    ).fetchall()
+    release_conn(conn)
+    return [dict(r) for r in rows]
+
+
+def get_dice_stats(user_id: int) -> dict:
+    conn = get_conn()
+    row = conn.execute(
+        """SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN won=1 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN won=0 AND status IN ('won','lost') THEN 1 ELSE 0 END) as losses,
+            SUM(COALESCE(pnl_usd, 0)) as total_pnl,
+            MAX(payout_usd) as best_payout
+           FROM dice_games WHERE user_id=? AND status IN ('won','lost')""",
+        (user_id,),
+    ).fetchone()
+    release_conn(conn)
+    return dict(row) if row else {}
+
+
+def get_dice_leaderboard(limit: int = 50) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT user_id, COUNT(*) as rolls,
+                  SUM(CASE WHEN won=1 THEN 1 ELSE 0 END) as wins,
+                  SUM(pnl_usd) as total_pnl,
+                  MAX(payout_usd) as best_payout
+           FROM dice_games WHERE status IN ('won','lost')
+           GROUP BY user_id HAVING rolls > 0
+           ORDER BY total_pnl DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    release_conn(conn)
+    return [dict(r) for r in rows]
 
 
 # ── FundingArb Helpers ────────────────────────────────────────

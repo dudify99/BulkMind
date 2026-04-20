@@ -163,6 +163,13 @@ class Dashboard:
         self.app.router.add_get("/api/hb/game/{game_id}", self._hb_game_state)
         self.app.router.add_get("/api/hb/game/history/{wallet}", self._hb_game_history)
         self.app.router.add_get("/api/hb/game/leaderboard", self._hb_game_leaderboard)
+        # ── Market Dice Routes ──
+        self.app.router.add_post("/api/hb/dice/roll", self._dice_roll)
+        self.app.router.add_get("/api/hb/dice/{roll_id}", self._dice_state)
+        self.app.router.add_get("/api/hb/dice/history/{wallet}", self._dice_history)
+        self.app.router.add_get("/api/hb/dice/stats/{wallet}", self._dice_stats)
+        self.app.router.add_get("/api/hb/dice/leaderboard", self._dice_leaderboard)
+        self.app.router.add_get("/api/hb/dice/verify/{roll_id}", self._dice_verify)
         # ── Analytics Routes (MMT-style) ──
         self.app.router.add_get("/api/hb/orderflow/cvd", self._hb_cvd)
         self.app.router.add_get("/api/hb/orderflow/delta", self._hb_volume_delta)
@@ -1636,6 +1643,143 @@ class Dashboard:
         """Moon or Doom leaderboard — highest multiplier cash-outs."""
         try:
             return web.json_response(hb_get_game_leaderboard())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # ── Market Dice Handlers ─────────────────────────────────
+
+    async def _dice_roll(self, request):
+        """Create and start a dice roll. 5-second settlement."""
+        from dice_engine import dice
+        from db import save_dice_game, hb_get_user_by_wallet, hb_update_balance
+        try:
+            data = await request.json()
+            wallet = data.get("wallet", "")
+            symbol = validate_symbol(data.get("symbol", "BTC-USD"))
+            exchange = data.get("exchange", "bulk")
+            game_type = data.get("game_type", "pick")
+            bet_amount = float(data.get("bet_amount", 1.0))
+            player_pick = int(data.get("player_pick", 1))
+
+            user = hb_get_user_by_wallet(wallet)
+            if not user:
+                return web.json_response({"error": "User not found"}, status=404)
+            if user["balance"] < bet_amount:
+                return web.json_response({"error": "Insufficient balance"}, status=400)
+
+            roll = dice.create_roll(
+                user_id=user["id"], symbol=symbol, exchange=exchange,
+                game_type=game_type, bet_amount=bet_amount,
+                player_pick=player_pick,
+            )
+
+            hb_update_balance(user["id"], -bet_amount)
+
+            db_id = save_dice_game(
+                user["id"], symbol, exchange, game_type,
+                bet_amount, player_pick, roll.commitment_hash,
+            )
+            roll.roll_id = db_id
+            dice.active_rolls[db_id] = dice.active_rolls.pop(roll.roll_id, roll)
+            roll.roll_id = db_id
+
+            price = await self._get_price(symbol, exchange)
+            if price:
+                price_str = f"{price}"
+                dice.start_roll(db_id, price, price_str)
+
+            return web.json_response(dice.to_dict(roll))
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _dice_state(self, request):
+        """Get roll state. Auto-settles when window expires."""
+        from dice_engine import dice
+        from db import settle_dice_game, hb_update_balance
+        try:
+            roll_id = int(request.match_info["roll_id"])
+            roll = dice.active_rolls.get(roll_id)
+            if not roll:
+                from db import get_conn, release_conn
+                conn = get_conn()
+                row = conn.execute("SELECT * FROM dice_games WHERE id=?", (roll_id,)).fetchone()
+                release_conn(conn)
+                if row:
+                    return web.json_response(dict(row))
+                return web.json_response({"error": "Roll not found"}, status=404)
+
+            price = await self._get_price(roll.symbol, roll.exchange)
+            if price:
+                dice.tick(roll_id, price, f"{price}")
+
+            if roll.status in ("won", "lost"):
+                settle_dice_game(
+                    roll_id, roll.entry_price_str, roll.settlement_price_str,
+                    roll.raw_digits, roll.dice_result, roll.won,
+                    roll.payout_multiplier, roll.payout_usd, roll.pnl_usd,
+                )
+                if roll.won:
+                    hb_update_balance(roll.user_id, roll.payout_usd)
+                await self.reporter._ws_broadcast("dice_result", json.dumps({
+                    "roll_id": roll_id,
+                    "dice_result": roll.dice_result,
+                    "won": roll.won,
+                    "payout_usd": roll.payout_usd,
+                    "game_type": roll.game_type,
+                }))
+
+            return web.json_response(dice.to_dict(roll))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _dice_history(self, request):
+        from db import get_dice_history, hb_get_user_by_wallet
+        wallet = request.match_info["wallet"]
+        user = hb_get_user_by_wallet(wallet)
+        if not user:
+            return web.json_response([])
+        return web.json_response(get_dice_history(user["id"]))
+
+    async def _dice_stats(self, request):
+        from db import get_dice_stats, hb_get_user_by_wallet
+        wallet = request.match_info["wallet"]
+        user = hb_get_user_by_wallet(wallet)
+        if not user:
+            return web.json_response({})
+        return web.json_response(get_dice_stats(user["id"]))
+
+    async def _dice_leaderboard(self, request):
+        from db import get_dice_leaderboard
+        return web.json_response(get_dice_leaderboard())
+
+    async def _dice_verify(self, request):
+        """Provable fairness — anyone can verify any past roll."""
+        from dice_engine import DiceEngine
+        try:
+            roll_id = int(request.match_info["roll_id"])
+            from db import get_conn, release_conn
+            conn = get_conn()
+            row = conn.execute("SELECT * FROM dice_games WHERE id=?", (roll_id,)).fetchone()
+            release_conn(conn)
+            if not row:
+                return web.json_response({"error": "Roll not found"}, status=404)
+            r = dict(row)
+            if r["status"] not in ("won", "lost"):
+                return web.json_response({"error": "Roll not yet settled"}, status=400)
+
+            result = DiceEngine.verify(
+                roll_id=r["id"],
+                user_id=r["user_id"],
+                created_at=0,
+                settlement_price_str=r["settlement_price"],
+                expected_result=r["dice_result"],
+            )
+            result["settlement_price"] = r["settlement_price"]
+            result["player_pick"] = r["player_pick"]
+            result["game_type"] = r["game_type"]
+            return web.json_response(result)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 

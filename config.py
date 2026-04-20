@@ -128,6 +128,14 @@ HL_ASSET_IDS = {
     "SOL": 5,
 }
 
+# ── Market Dice Settings ─────────────────────────────────────
+DICE_SYMBOLS         = ["BTC-USD"]     # BTC only — deepest liquidity, best entropy
+DICE_WINDOW_SEC      = 5              # 5-second settlement (fast mode)
+DICE_BET_TIERS       = [1.0, 50.0, 100.0]   # Fixed bet amounts
+DICE_PICK_PAYOUT     = 5.0            # 5x for exact number (house edge 16.7%)
+DICE_BINARY_PAYOUT   = 1.9            # 1.9x for over/under, even/odd (house edge 5%)
+DICE_PAPER_MODE      = True
+
 # ── SMCBot Settings ──────────────────────────────────────────
 SMC_SYMBOLS          = ["BTC-USD", "ETH-USD", "SOL-USD"]
 SMC_TIMEFRAME_MIN    = 15          # 15-min candles (same as BreakoutBot)
