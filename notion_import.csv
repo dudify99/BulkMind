@@ -1,0 +1,32 @@
+Title,Sprint,Status,Priority,Agent,Type,GitHub Issue,Acceptance Criteria Count
+"Design System — Color Palette & Typography",Sprint 1,Not Started,Critical,agent:design,Design,#10,7
+"Design System — Component Library (Buttons Inputs Cards Modals)",Sprint 1,Not Started,Critical,agent:design,Design,#11,8
+"Core Layout — App Shell (Sidebar + Header + Content Grid)",Sprint 2,Not Started,Critical,agent:frontend,Frontend,#12,7
+"Toast Notifications + Loading States + Skeletons",Sprint 2,Not Started,High,agent:frontend,Frontend,#13,6
+"Trading Interface — Chart + Order Panel + Positions",Sprint 3,Not Started,Critical,agent:frontend,Frontend,#14,8
+"Live Trade Feed + WebSocket Manager",Sprint 3,Not Started,High,agent:frontend,Frontend,#15,7
+"Moon or Doom Game UI",Sprint 4,Not Started,High,agent:frontend,Game,#16,8
+"Flip It Game UI",Sprint 4,Not Started,High,agent:frontend,Game,#17,8
+"Sniper Game UI",Sprint 4,Not Started,High,agent:frontend,Game,#18,9
+"Battle Royale Game UI",Sprint 4,Not Started,High,agent:frontend,Game,#19,9
+"Alpha Rush Game UI",Sprint 4,Not Started,High,agent:frontend,Game,#20,8
+"Analytics — Order Flow (CVD Volume Delta Footprint Bubbles)",Sprint 5,Not Started,High,agent:dataviz,Analytics,#21,7
+"Analytics — Liquidity (Heatmap + Depth Chart)",Sprint 5,Not Started,High,agent:dataviz,Analytics,#22,5
+"Analytics — Derivatives (OI Funding Liquidation Map)",Sprint 5,Not Started,High,agent:dataviz,Analytics,#23,5
+"Analytics — Market Profile (Volume Profile + TPO)",Sprint 5,Not Started,Medium,agent:dataviz,Analytics,#24,5
+"Wallet Connect — Privy Auth Flow",Sprint 6,Not Started,Critical,agent:integrations,Auth,#25,10
+"User Profile + Portfolio + Achievements",Sprint 6,Not Started,High,agent:frontend,User System,#26,7
+"Leaderboard — 7 Tabs x 4 Time Periods",Sprint 6,Not Started,High,agent:frontend,User System,#27,7
+"Agent Monitor Dashboard — Live Bot Health Grid",Sprint 7,Not Started,High,agent:frontend,Operations,#28,8
+"Wallet Explorer + Whale Tracker",Sprint 7,Not Started,Medium,agent:frontend,Operations,#29,5
+"Polish — Animations Keyboard Shortcuts Performance",Sprint 8,Not Started,Medium,agent:frontend,Polish,#30,10
+"Mobile Responsive + PWA Support",Sprint 8,Not Started,Medium,agent:frontend,Polish,#31,8
+"Deploy full Python backend to Railway",Backlog,Not Started,Critical,agent:backend,Infrastructure,#1,5
+"Add authentication to dashboard",Backlog,Not Started,Critical,agent:backend,Security,#2,5
+"Isolate agent crashes — supervisor pattern",Backlog,Done,High,agent:backend,Stability,#3,4
+"Add retry + timeout to LLM API calls",Backlog,Not Started,High,agent:backend,Stability,#4,5
+"Add news source fallback handling",Backlog,Not Started,High,agent:backend,Reliability,#5,5
+"SQLite concurrent write contention",Backlog,Not Started,Medium,agent:backend,Performance,#6,5
+"Build backtesting framework",Backlog,Not Started,Medium,agent:backend,Feature,#7,6
+"Add CI/CD pipeline",Backlog,Not Started,Low,agent:backend,Infrastructure,#8,5
+"Build MomentumBot agent",Backlog,Not Started,Low,agent:backend,Feature,#9,6
