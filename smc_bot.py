@@ -1,7 +1,7 @@
 """
-SMCBot — Smart Money Concepts Trading Agent
+SMCBot — Smart Money Concepts Trading Agent (Multi-Exchange)
 Strategy: CHoCH + BOS + Liquidity Sweep + Order Block + FVG confluence
-Requires minimum SMC_MIN_CONFLUENCE signals before entering a trade.
+Trades on both Bulk and Hyperliquid simultaneously via ExchangeVenue.
 """
 
 import asyncio
@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from typing import Optional, Dict, List
 
-from executor import BulkClient, BulkExecutor
+from news_trader import ExchangeVenue
 from ta import (
     detect_order_blocks, detect_fvg, detect_bos,
     detect_choch, detect_liquidity_sweep,
@@ -32,30 +32,18 @@ AGENT_NAME = "SMCBot"
 
 
 class SMCBot:
-    def __init__(self, executor: BulkExecutor,
-                 client: BulkClient,
-                 reporter: Reporter):
-        self.executor    = executor
-        self.client      = client
+    def __init__(self, venues: List[ExchangeVenue], reporter: Reporter):
+        self.venues      = venues
         self.reporter    = reporter
         self.open_trades: Dict[int, dict] = {}
 
     # ── Signal Generation ──────────────────────────────────────
 
-    async def get_signal(self, symbol: str) -> Optional[dict]:
-        """
-        SMC confluence pipeline (5 layers):
-          1. CHoCH  — Change of Character (reversal, sets direction)
-          2. BOS    — Break of Structure (continuation confirmation)
-          3. Sweep  — Liquidity sweep / stop hunt (manipulation confirmation)
-          4. OB     — Order Block (institutional entry zone)
-          5. FVG    — Fair Value Gap (imbalance / magnet zone)
+    async def get_signal(self, venue: ExchangeVenue, symbol: str) -> Optional[dict]:
+        ex_symbol = venue.resolve_symbol(symbol)
 
-        Requires >= SMC_MIN_CONFLUENCE signals aligned in the same direction.
-        SL placed 1x ATR beyond swept level or OB edge; TP at SMC_TP_RATIO risk.
-        """
-        raw = await self.client.get_candles(
-            symbol,
+        raw = await venue.client.get_candles(
+            ex_symbol,
             interval=f"{SMC_TIMEFRAME_MIN}m",
             limit=SMC_LOOKBACK + 20,
         )
@@ -105,10 +93,9 @@ class SMCBot:
             reasons.append(f"FVG(gap={entry_fvg['gap_size']:.5f})")
 
         if score < SMC_MIN_CONFLUENCE:
-            print(f"  [{symbol}] SMC {score}/{SMC_MIN_CONFLUENCE}: {', '.join(reasons)}")
+            print(f"  [{venue.name}:{symbol}] SMC {score}/{SMC_MIN_CONFLUENCE}: {', '.join(reasons)}")
             return None
 
-        # ATR for SL/TP sizing
         atr_vals = atr(raw, period=14)
         if not atr_vals:
             return None
@@ -120,6 +107,7 @@ class SMCBot:
 
         return {
             "symbol":      symbol,
+            "exchange":    venue.name,
             "direction":   direction,
             "entry":       entry,
             "sl":          levels["sl"],
@@ -139,18 +127,18 @@ class SMCBot:
 
     # ── Trade Execution ────────────────────────────────────────
 
-    async def execute_signal(self, signal: dict) -> Optional[int]:
-        symbol = signal["symbol"]
-        side   = signal["direction"]
+    async def execute_signal(self, venue: ExchangeVenue, signal: dict) -> Optional[int]:
+        symbol    = signal["symbol"]
+        ex_symbol = venue.resolve_symbol(symbol)
+        side      = signal["direction"]
 
         open_trades = get_open_trades(AGENT_NAME)
         for t in open_trades:
-            if t["symbol"] == symbol:
-                print(f"  [{symbol}] Already have open SMC trade, skipping")
+            if t["symbol"] == symbol and t.get("exchange", "bulk") == venue.name:
                 return None
 
-        result = await self.executor.place_bracket(
-            symbol      = symbol,
+        result = await venue.executor.place_bracket(
+            symbol      = ex_symbol,
             side        = side,
             entry_price = signal["entry"],
             size        = signal["size"],
@@ -162,7 +150,7 @@ class SMCBot:
             safe = {k: v for k, v in signal.items()
                     if k not in ("choch", "bos", "sweep", "order_block", "fvg")}
             log_issue("HIGH", "AGENT_ERROR",
-                      f"SMCBot failed to place order on {symbol}",
+                      f"SMCBot failed on {venue.name}:{symbol}",
                       json.dumps(safe))
             return None
 
@@ -175,43 +163,48 @@ class SMCBot:
             sl          = signal["sl"],
             tp          = signal["tp"],
             signal_data = signal,
-            paper       = SMC_PAPER_MODE,
+            paper       = venue.paper,
             order_id    = result.get("order_id", ""),
         )
 
         self.open_trades[trade_id] = {
-            "symbol": symbol,
-            "side":   side,
-            "entry":  signal["entry"],
-            "sl":     signal["sl"],
-            "tp":     signal["tp"],
-            "size":   signal["size"],
+            "symbol":   symbol,
+            "exchange": venue.name,
+            "side":     side,
+            "entry":    signal["entry"],
+            "sl":       signal["sl"],
+            "tp":       signal["tp"],
+            "size":     signal["size"],
         }
 
+        monitor.trade_placed(AGENT_NAME)
         await self.reporter.send(
             f"🧠 *SMCBot — New Trade*\n"
+            f"Exchange: `{venue.name}`\n"
             f"Symbol: `{symbol}`\n"
             f"Side: `{side}`\n"
             f"Entry: `{signal['entry']}`\n"
-            f"SL: `{signal['sl']}`\n"
-            f"TP: `{signal['tp']}`\n"
+            f"SL: `{signal['sl']}` | TP: `{signal['tp']}`\n"
             f"Size: `{signal['size']}`\n"
             f"Confluence: `{signal['score']}/5`\n"
             f"Signals: `{', '.join(signal['reasons'])}`\n"
-            f"Paper: `{SMC_PAPER_MODE}`"
+            f"Paper: `{venue.paper}`"
         )
-
         return trade_id
 
     # ── Trade Management ───────────────────────────────────────
 
     async def manage_open_trades(self):
-        """Check open trades — close if TP/SL hit (paper simulation)."""
         if not self.open_trades:
             return
 
         for trade_id, trade in list(self.open_trades.items()):
-            ticker = await self.client.get_ticker(trade["symbol"])
+            venue = self._find_venue(trade.get("exchange", "bulk"))
+            if not venue:
+                continue
+
+            ex_symbol = venue.resolve_symbol(trade["symbol"])
+            ticker = await venue.client.get_ticker(ex_symbol)
             if not ticker:
                 continue
 
@@ -242,12 +235,18 @@ class SMCBot:
                 emoji = "✅" if status == "WIN" else "❌"
                 await self.reporter.send(
                     f"{emoji} *SMCBot — Trade Closed*\n"
+                    f"Exchange: `{venue.name}`\n"
                     f"Symbol: `{trade['symbol']}`\n"
                     f"Status: `{status}`\n"
                     f"Exit: `{price}`\n"
-                    f"PnL: `${pnl:.2f}`\n"
-                    f"Trade ID: `{trade_id}`"
+                    f"PnL: `${pnl:.2f}`"
                 )
+
+    def _find_venue(self, name: str) -> Optional[ExchangeVenue]:
+        for v in self.venues:
+            if v.name == name:
+                return v
+        return self.venues[0] if self.venues else None
 
     # ── Performance Report ─────────────────────────────────────
 
@@ -314,25 +313,29 @@ class SMCBot:
     # ── Main Loop ──────────────────────────────────────────────
 
     async def run(self):
-        print(f"🧠 {AGENT_NAME} started — Paper mode: {SMC_PAPER_MODE}")
+        venue_names = [v.name for v in self.venues]
+        print(f"🧠 {AGENT_NAME} started — Exchanges: {venue_names}")
         scan_count = 0
 
         while True:
             try:
                 monitor.heartbeat(AGENT_NAME)
-                print(f"\n🔍 [{AGENT_NAME}] Scanning {len(SMC_SYMBOLS)} symbols...")
+                print(f"\n🔍 [{AGENT_NAME}] Scanning {len(SMC_SYMBOLS)} symbols "
+                      f"on {len(self.venues)} exchange(s)...")
 
-                for symbol in SMC_SYMBOLS:
-                    signal = await self.get_signal(symbol)
-                    if signal:
-                        print(
-                            f"  🎯 SMC SIGNAL: {symbol} {signal['direction']} "
-                            f"score={signal['score']}/5 "
-                            f"[{', '.join(signal['reasons'])}]"
-                        )
-                        await self.execute_signal(signal)
-                    else:
-                        print(f"  [{symbol}] No SMC signal")
+                for venue in self.venues:
+                    for symbol in SMC_SYMBOLS:
+                        signal = await self.get_signal(venue, symbol)
+                        if signal:
+                            print(
+                                f"  🎯 SMC: {venue.name}:{symbol} {signal['direction']} "
+                                f"score={signal['score']}/5 "
+                                f"[{', '.join(signal['reasons'])}]"
+                            )
+                            monitor.signal_found(AGENT_NAME)
+                            await self.execute_signal(venue, signal)
+                        else:
+                            print(f"  [{venue.name}:{symbol}] No SMC signal")
 
                 await self.manage_open_trades()
 
@@ -344,6 +347,7 @@ class SMCBot:
 
             except Exception as e:
                 print(f"SMCBot error: {e}")
+                monitor.record_error(AGENT_NAME, str(e))
                 log_issue("HIGH", "AGENT_ERROR", "SMCBot runtime error", str(e))
 
             await asyncio.sleep(SMC_TIMEFRAME_MIN * 60)
