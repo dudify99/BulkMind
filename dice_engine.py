@@ -1,7 +1,11 @@
 """
 Market Dice — Price-Derived Dice Game for HyperBulk
 No random seeds. Real market price movements determine dice outcomes.
-Settlement in 5 seconds. Provably fair via commit-reveal + price oracle.
+Provably fair via commit-reveal + price oracle.
+
+Two modes:
+  INSTANT (default): settles in <70ms using cached price — zero wait.
+  ANIMATED (5s): live dice rolling animation, settles after window.
 
 Bet tiers: $1, $50, $100
 Game types: pick (5x), over_under (1.9x), even_odd (1.9x)
@@ -32,7 +36,76 @@ class DiceEngine:
         self.active_rolls: Dict[int, "DiceRoll"] = {}
         self._next_id = 1
 
-    # ── Create ────────────────────────────────────────────────
+    # ── Instant Roll (<70ms, single call) ─────────────────────
+
+    def instant_roll(self, user_id: int, symbol: str, exchange: str,
+                     game_type: str, bet_amount: float, player_pick: int,
+                     price: float, price_str: str) -> "DiceRoll":
+        """Complete a dice roll in a single call. No settlement window.
+        Uses the cached market price as the entropy source.
+        Total compute time: <5ms.
+        """
+        if bet_amount not in DICE_BET_TIERS:
+            raise ValueError(f"Bet must be one of {DICE_BET_TIERS}")
+        if game_type not in ("pick", "over_under", "even_odd"):
+            raise ValueError("game_type must be pick, over_under, or even_odd")
+        if game_type == "pick" and not (1 <= player_pick <= 6):
+            raise ValueError("pick must be 1-6")
+        if game_type in ("over_under", "even_odd") and player_pick not in (0, 1):
+            raise ValueError("pick must be 0 or 1")
+        if price <= 0:
+            raise ValueError("No price available")
+
+        roll_id = self._next_id
+        self._next_id += 1
+        ts = time.time()
+        commitment = _make_commitment(roll_id, user_id, ts)
+
+        # Compute dice in one shot
+        raw_digits = _extract_digits(price_str)
+        combined = _combine(raw_digits, commitment)
+        dice_result = (combined % 6) + 1
+        won = _check_win(game_type, player_pick, dice_result)
+
+        # Payout
+        if won:
+            mult = DICE_PICK_PAYOUT if game_type == "pick" else DICE_BINARY_PAYOUT
+            payout = round(bet_amount * mult, 2)
+            pnl = round(payout - bet_amount, 2)
+            status = "won"
+        else:
+            mult = 0.0
+            payout = 0.0
+            pnl = -bet_amount
+            status = "lost"
+
+        return DiceRoll(
+            roll_id=roll_id,
+            user_id=user_id,
+            symbol=symbol,
+            exchange=exchange,
+            game_type=game_type,
+            num_dice=1,
+            bet_amount=bet_amount,
+            player_pick=player_pick,
+            commitment_hash=commitment,
+            created_at=ts,
+            status=status,
+            entry_price=price,
+            entry_price_str=price_str,
+            settlement_price=price,
+            settlement_price_str=price_str,
+            settled_at=ts,
+            raw_digits=raw_digits,
+            dice_result=dice_result,
+            won=won,
+            payout_multiplier=mult,
+            payout_usd=payout,
+            pnl_usd=pnl,
+            live_face=dice_result,
+        )
+
+    # ── Create (animated 5s mode) ─────────────────────────────
 
     def create_roll(self, user_id: int, symbol: str, exchange: str,
                     game_type: str, bet_amount: float,

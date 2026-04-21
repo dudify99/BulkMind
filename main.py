@@ -230,9 +230,12 @@ async def hb_analytics_loop(bulk_client, hl_client):
                     if bids or asks:
                         liquidity.record_snapshot(symbol, bids, asks)
 
-                # Bulk ticker for OI + funding
+                # Bulk ticker for OI + funding + price cache
                 ticker = await bulk_client.get_ticker(symbol)
                 if ticker:
+                    last_p = float(ticker.get("lastPrice", 0))
+                    if last_p:
+                        Dashboard.cache_price(symbol, "bulk", last_p)
                     oi = float(ticker.get("openInterest", 0))
                     if oi:
                         derivatives.record_oi(symbol, oi)

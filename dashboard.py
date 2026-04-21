@@ -641,8 +641,35 @@ class Dashboard:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    # ── In-memory price cache (updated by analytics loop) ──
+    _price_cache: dict = {}        # "bulk:BTC-USD" → 84723.45
+    _price_cache_str: dict = {}    # "bulk:BTC-USD" → "84723.45"
+    _price_cache_ts: dict = {}     # "bulk:BTC-USD" → timestamp
+
+    @classmethod
+    def cache_price(cls, symbol: str, exchange: str, price: float):
+        import time as _t
+        key = f"{exchange}:{symbol}"
+        cls._price_cache[key] = price
+        cls._price_cache_str[key] = f"{price}"
+        cls._price_cache_ts[key] = _t.time()
+
+    @classmethod
+    def get_cached_price(cls, symbol: str, exchange: str) -> tuple:
+        """Return (price_float, price_str) from cache. Zero-latency."""
+        key = f"{exchange}:{symbol}"
+        p = cls._price_cache.get(key, 0.0)
+        s = cls._price_cache_str.get(key, "0")
+        return p, s
+
     async def _get_price(self, symbol: str, exchange: str) -> float:
-        """Fetch current price from the appropriate exchange."""
+        """Fetch current price — uses cache if fresh (<10s), else API call."""
+        import time as _t
+        key = f"{exchange}:{symbol}"
+        cached_ts = self._price_cache_ts.get(key, 0)
+        if _t.time() - cached_ts < 10 and self._price_cache.get(key, 0) > 0:
+            return self._price_cache[key]
+
         try:
             async with aiohttp.ClientSession() as session:
                 if exchange == "hyperliquid":
@@ -654,16 +681,21 @@ class Dashboard:
                             hl_map = {"BTC-USD": "BTC", "ETH-USD": "ETH", "SOL-USD": "SOL"}
                             hl_sym = hl_map.get(symbol, symbol.replace("-USD", ""))
                             if hl_sym in data:
-                                return float(data[hl_sym])
+                                price = float(data[hl_sym])
+                                self.cache_price(symbol, exchange, price)
+                                return price
                 else:
                     url = f"{BULK_API_BASE}/ticker/{symbol}"
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                         if resp.status == 200:
                             t = await resp.json(content_type=None)
-                            return float(t.get("lastPrice", 0))
+                            price = float(t.get("lastPrice", 0))
+                            if price:
+                                self.cache_price(symbol, exchange, price)
+                            return price
         except Exception:
             pass
-        return 0.0
+        return self._price_cache.get(key, 0.0)
 
     async def _hb_close_trade(self, request):
         """Close an open HyperBulk trade with proper price from the right exchange."""
@@ -1649,9 +1681,9 @@ class Dashboard:
     # ── Market Dice Handlers ─────────────────────────────────
 
     async def _dice_roll(self, request):
-        """Create and start a dice roll. 5-second settlement."""
+        """Roll dice. Instant mode (<70ms) by default. Pass mode=animated for 5s window."""
         from dice_engine import dice
-        from db import save_dice_game, hb_get_user_by_wallet, hb_update_balance
+        from db import save_dice_game, settle_dice_game, hb_get_user_by_wallet, hb_update_balance
         try:
             data = await request.json()
             wallet = data.get("wallet", "")
@@ -1660,6 +1692,7 @@ class Dashboard:
             game_type = data.get("game_type", "pick")
             bet_amount = float(data.get("bet_amount", 1.0))
             player_pick = int(data.get("player_pick", 1))
+            mode = data.get("mode", "instant")  # "instant" or "animated"
 
             user = hb_get_user_by_wallet(wallet)
             if not user:
@@ -1667,28 +1700,78 @@ class Dashboard:
             if user["balance"] < bet_amount:
                 return web.json_response({"error": "Insufficient balance"}, status=400)
 
-            roll = dice.create_roll(
-                user_id=user["id"], symbol=symbol, exchange=exchange,
-                game_type=game_type, bet_amount=bet_amount,
-                player_pick=player_pick,
-            )
-
+            # Debit bet
             hb_update_balance(user["id"], -bet_amount)
 
-            db_id = save_dice_game(
-                user["id"], symbol, exchange, game_type,
-                bet_amount, player_pick, roll.commitment_hash,
-            )
-            roll.roll_id = db_id
-            dice.active_rolls[db_id] = dice.active_rolls.pop(roll.roll_id, roll)
-            roll.roll_id = db_id
+            if mode == "instant":
+                # ── INSTANT MODE: settle in this request (<70ms total) ──
+                price, price_str = self.get_cached_price(symbol, exchange)
+                if not price:
+                    price = await self._get_price(symbol, exchange)
+                    price_str = f"{price}"
 
-            price = await self._get_price(symbol, exchange)
-            if price:
-                price_str = f"{price}"
-                dice.start_roll(db_id, price, price_str)
+                roll = dice.instant_roll(
+                    user_id=user["id"], symbol=symbol, exchange=exchange,
+                    game_type=game_type, bet_amount=bet_amount,
+                    player_pick=player_pick,
+                    price=price, price_str=price_str,
+                )
 
-            return web.json_response(dice.to_dict(roll))
+                # Persist (async-safe, doesn't block response)
+                db_id = save_dice_game(
+                    user["id"], symbol, exchange, game_type,
+                    bet_amount, player_pick, roll.commitment_hash,
+                )
+                settle_dice_game(
+                    db_id, roll.entry_price_str, roll.settlement_price_str,
+                    roll.raw_digits, roll.dice_result, roll.won,
+                    roll.payout_multiplier, roll.payout_usd, roll.pnl_usd,
+                )
+                roll.roll_id = db_id
+
+                # Credit payout
+                if roll.won:
+                    hb_update_balance(user["id"], roll.payout_usd)
+
+                # Broadcast to spectators
+                await self.reporter._ws_broadcast("dice_result", json.dumps({
+                    "roll_id": db_id,
+                    "dice_result": roll.dice_result,
+                    "won": roll.won,
+                    "payout_usd": roll.payout_usd,
+                    "pnl_usd": roll.pnl_usd,
+                    "game_type": game_type,
+                    "bet_amount": bet_amount,
+                    "player_pick": player_pick,
+                }))
+
+                return web.json_response(dice.to_dict(roll))
+
+            else:
+                # ── ANIMATED MODE: 5-second settlement window ──
+                roll = dice.create_roll(
+                    user_id=user["id"], symbol=symbol, exchange=exchange,
+                    game_type=game_type, bet_amount=bet_amount,
+                    player_pick=player_pick,
+                )
+
+                db_id = save_dice_game(
+                    user["id"], symbol, exchange, game_type,
+                    bet_amount, player_pick, roll.commitment_hash,
+                )
+                roll.roll_id = db_id
+                dice.active_rolls[db_id] = dice.active_rolls.pop(roll.roll_id, roll)
+                roll.roll_id = db_id
+
+                price, price_str = self.get_cached_price(symbol, exchange)
+                if not price:
+                    price = await self._get_price(symbol, exchange)
+                    price_str = f"{price}"
+                if price:
+                    dice.start_roll(db_id, price, price_str)
+
+                return web.json_response(dice.to_dict(roll))
+
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         except Exception as e:
