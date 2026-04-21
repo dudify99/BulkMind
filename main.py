@@ -180,6 +180,7 @@ async def main():
             supervise("SMCBot",       smc_bot.run),
             hb_pnl_loop(reporter, dashboard),
             hb_analytics_loop(client, hl_client),
+            dice_settle_loop(client, hl_client, reporter),
             evoskill_schedule(),
         )
 
@@ -248,6 +249,65 @@ async def hb_analytics_loop(bulk_client, hl_client):
         except Exception as e:
             print(f"Analytics loop error: {e}")
         await asyncio.sleep(10)
+
+
+async def dice_settle_loop(bulk_client, hl_client, reporter):
+    """Auto-settle dice rolls every 500ms. Push results via WebSocket instantly."""
+    from dice_engine import dice
+    from db import settle_dice_game, hb_update_balance
+    while True:
+        try:
+            for roll_id, roll in list(dice.active_rolls.items()):
+                if roll.status != "live":
+                    continue
+                # Fetch price from the roll's exchange
+                if roll.exchange == "hyperliquid":
+                    from config import HL_SYMBOL_MAP
+                    hl_sym = HL_SYMBOL_MAP.get(roll.symbol, roll.symbol)
+                    ticker = await hl_client.get_ticker(hl_sym)
+                else:
+                    ticker = await bulk_client.get_ticker(roll.symbol)
+
+                if not ticker:
+                    continue
+                price = float(ticker.get("lastPrice") or
+                              ticker.get("last_price") or
+                              ticker.get("price", 0))
+                if not price:
+                    continue
+
+                price_str = f"{price}"
+                dice.tick(roll_id, price, price_str)
+
+                # Push live face animation during window
+                if roll.status == "live":
+                    await reporter._ws_broadcast("dice_tick", json.dumps({
+                        "roll_id": roll_id,
+                        "live_face": roll.live_face,
+                        "time_remaining": round(roll.time_remaining, 1),
+                        "current_price": price,
+                    }))
+
+                if roll.status in ("won", "lost"):
+                    settle_dice_game(
+                        roll_id, roll.entry_price_str, roll.settlement_price_str,
+                        roll.raw_digits, roll.dice_result, roll.won,
+                        roll.payout_multiplier, roll.payout_usd, roll.pnl_usd,
+                    )
+                    if roll.won:
+                        hb_update_balance(roll.user_id, roll.payout_usd)
+                    await reporter._ws_broadcast("dice_result", json.dumps({
+                        "roll_id": roll_id,
+                        "dice_result": roll.dice_result,
+                        "won": roll.won,
+                        "payout_usd": roll.payout_usd,
+                        "pnl_usd": roll.pnl_usd,
+                        "game_type": roll.game_type,
+                        "bet_amount": roll.bet_amount,
+                    }))
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
 
 
 async def evoskill_schedule():
