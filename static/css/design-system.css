@@ -1,0 +1,169 @@
+/* ═══════════════════════════════════════════════════════════
+   BulkMind Design System — Design Tokens
+   Hyperliquid-grade dark trading terminal aesthetic.
+   All components reference these variables.
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Background Scale ──────────────────────────────────── */
+  --bg-0: #08090d;          /* deepest — page background */
+  --bg-1: #0d1117;          /* primary surfaces */
+  --bg-2: #161b22;          /* elevated cards */
+  --bg-3: #1c2128;          /* hover states, inputs */
+  --bg-4: #21262d;          /* active states, borders */
+
+  /* ── Accent ────────────────────────────────────────────── */
+  --accent: #00e676;         /* primary brand — green glow */
+  --accent-dim: #00c853;
+  --accent-bg: rgba(0,230,118,0.08);
+  --purple: #7c4dff;
+  --purple-dim: #6200ea;
+  --purple-bg: rgba(124,77,255,0.08);
+
+  /* ── Semantic Colors ───────────────────────────────────── */
+  --green: #0ecb81;          /* profit, buy, success */
+  --green-bg: rgba(14,203,129,0.10);
+  --red: #f6465d;            /* loss, sell, error */
+  --red-bg: rgba(246,70,93,0.10);
+  --yellow: #f0b90b;         /* warning, pending */
+  --yellow-bg: rgba(240,185,11,0.10);
+  --blue: #1e90ff;           /* info, links */
+  --blue-bg: rgba(30,144,255,0.10);
+  --orange: #ff9800;         /* stale, caution */
+
+  /* ── Text Scale ────────────────────────────────────────── */
+  --text-1: #e6edf3;         /* primary — headings, body */
+  --text-2: #8b949e;         /* secondary — labels, hints */
+  --text-3: #484f58;         /* tertiary — disabled, muted */
+
+  /* ── Border ────────────────────────────────────────────── */
+  --border: #21262d;
+  --border-light: #30363d;
+
+  /* ── Typography ────────────────────────────────────────── */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+
+  --text-xs: 0.6875rem;      /* 11px */
+  --text-sm: 0.75rem;        /* 12px */
+  --text-base: 0.875rem;     /* 14px */
+  --text-lg: 1rem;           /* 16px */
+  --text-xl: 1.25rem;        /* 20px */
+  --text-2xl: 1.5rem;        /* 24px */
+  --text-3xl: 2rem;          /* 32px */
+  --text-4xl: 2.5rem;        /* 40px */
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-black: 800;
+
+  /* ── Spacing (4px grid) ────────────────────────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+
+  /* ── Radius ────────────────────────────────────────────── */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* ── Shadows ───────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+  --shadow-glow-green: 0 0 20px rgba(0,230,118,0.15);
+  --shadow-glow-red: 0 0 20px rgba(246,70,93,0.15);
+  --shadow-glow-purple: 0 0 20px rgba(124,77,255,0.15);
+
+  /* ── Transitions ───────────────────────────────────────── */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 100ms;
+  --dur-normal: 200ms;
+  --dur-slow: 400ms;
+
+  /* ── Z-index Scale ─────────────────────────────────────── */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal-backdrop: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+}
+
+/* ── Base Reset ──────────────────────────────────────────── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Monospace Numbers ───────────────────────────────────── */
+.mono { font-family: var(--font-mono); }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ── Text Utilities ──────────────────────────────────────── */
+.text-xs { font-size: var(--text-xs); }
+.text-sm { font-size: var(--text-sm); }
+.text-base { font-size: var(--text-base); }
+.text-lg { font-size: var(--text-lg); }
+.text-xl { font-size: var(--text-xl); }
+.text-2xl { font-size: var(--text-2xl); }
+.text-3xl { font-size: var(--text-3xl); }
+.text-4xl { font-size: var(--text-4xl); }
+.text-bold { font-weight: var(--weight-bold); }
+.text-semibold { font-weight: var(--weight-semibold); }
+.text-muted { color: var(--text-2); }
+.text-dim { color: var(--text-3); }
+.text-green { color: var(--green); }
+.text-red { color: var(--red); }
+.text-yellow { color: var(--yellow); }
+.text-blue { color: var(--blue); }
+.text-accent { color: var(--accent); }
+.text-right { text-align: right; }
+.text-center { text-align: center; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Layout Utilities ────────────────────────────────────── */
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.gap-1 { gap: var(--sp-1); }
+.gap-2 { gap: var(--sp-2); }
+.gap-3 { gap: var(--sp-3); }
+.gap-4 { gap: var(--sp-4); }
+.gap-6 { gap: var(--sp-6); }
+.w-full { width: 100%; }
+.flex-1 { flex: 1; }
+
+/* ── Scrollbar ───────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-1); }
+::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+/* ── Selection ───────────────────────────────────────────── */
+::selection { background: rgba(0,230,118,0.2); color: var(--text-1); }
